@@ -47,6 +47,12 @@ class StockInfo(Document):
     delist_date = StringField()
     is_hs = StringField()
     company_type = IntField(required=True)
+    # 从Stockdaily或者Stock中copy而来的指标， 方便聚合展示
+    PE = FloatField() # PE_ttm
+    marketValue = FloatField()
+    close = FloatField()
+    ROE_latest = FloatField()
+    ROE_year = FloatField()
     meta = {
         "strict": True,
         'collection': 'stocklist',

@@ -151,6 +151,12 @@ def crawlWord(word:str):
                             sent = sentence["sentence"]
                             createSplitWordJob(sent)
 
+                        # wiki
+                        wikiSummarys = wordData.get("wikipedia_digest", {}).get("summarys", [])
+                        for summary in wikiSummarys:
+                            sent = summary["summary"]
+                            createSplitWordJob(sent)
+
                     # # 创建爬取suggestion
                     # createCrawlJob(word, JobType.GET_SUGGESTION)
 
@@ -214,11 +220,16 @@ if __name__ == "__main__":
     connect(db="youdao", alias="youdao", username="canoxu", password="4401821211", authentication_source='admin')
     crawlTranslation()
 
-    # suggestWord("word")
-
-    # for tran in YoudaoTranslation.objects().limit(100000):
-    #     wordData = tran.content[0]["wordData"]
-    #     sentences = wordData.get("blng_sents_part", {}).get("sentence-pair", [])
-    #     for sentence in sentences:
-    #         sent = sentence["sentence"]
-    #         createSplitWordJob(sent)
+    # # 125000
+    # i = 0
+    # for k in range(0, 20):
+    #     for tran in YoudaoTranslation.objects().skip(i).limit(10000):
+    #         if len(tran.content) == 0: continue
+    #         wordData = tran.content[0]["wordData"]
+    #         sentences = wordData.get("wikipedia_digest", {}).get("summarys", [])
+    #         for sentence in sentences:
+    #             sent = sentence["summary"]
+    #             createSplitWordJob(sent)
+    #
+    #         i += 1
+    #         if i % 100 == 0: print(i)

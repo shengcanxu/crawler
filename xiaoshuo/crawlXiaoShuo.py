@@ -1,8 +1,8 @@
 import time
 from threading import Thread, Lock
-from xsJob import  createXSJob, finishXSJob, XSJob, createOrUpdateXSJob
+from utils.Job import  createJob, finishJob, XSJob, createOrUpdateJob
 import datetime
-from mongoengine import connect, Document, StringField, IntField, DictField, ListField, DateTimeField
+from mongoengine import connect, Document, StringField, IntField, ListField, DateTimeField
 from requests_html import HTMLSession
 from utils.logger import FileLogger
 import re
@@ -25,6 +25,7 @@ class XiaoShuoBen(Document):
     articleList = ListField()
     lastArticleId = IntField()
     lastCrawledArticleId = IntField()
+    updateDate = StringField()
     meta = {
         "strict": True,
         "collection": "xiaoshuoben",
@@ -45,20 +46,20 @@ class XiaoShuoArticle(Document):
 
 def createXiaoShuoBenJobs():
     for benId in range(1, 69318):
-        createXSJob(category="ben", name=str(benId))
+        createJob(XSJob, category="ben", name=str(benId))
         print(benId)
 
 def createXiaoShuoArticleJobs():
     titles = XiaoShuoBen.objects().distinct("title")
     for title in titles:
-        createXSJob(category="article", name=title)
+        createJob(XSJob, category="article", name=title)
         print(title)
 
 def refreshNullXiaoShuoBen():
     nullBens = XiaoShuoBen.objects(__raw__ = {'articleList': {'$size': 0}})
     for nullBen in nullBens:
         benId = nullBen.url[25:len(nullBen.url)-1]
-        createOrUpdateXSJob(category="ben", name=str(benId))
+        createOrUpdateJob(XSJob, category="ben", name=str(benId))
         print(nullBen.url)
 
 #  https://www.1biqug.net
@@ -68,7 +69,7 @@ def crawlXiaoShuoBen():
         url = "https://www.1biqug.net/9/%d/" % benId
         succ = _crawlXiaoShuoBen(url)
         if succ:
-            finishXSJob(job)
+            finishJob(job)
 
 def _crawlXiaoShuoBen(url:str):
     session = HTMLSession()
@@ -93,8 +94,9 @@ def _crawlXiaoShuoBen(url:str):
         listDl = response.html.find("#list>dl", first=True)
         list = listDl.find("dl>*")
 
-        articleList = []
+        articleList = ben.articleList if ben.articleList else []
         lastArticleId = ben.lastArticleId if ben.lastArticleId is not None else 0
+        hasChange = False
         for item in list:
             if item.tag == "dt": continue
             aTag = item.find("dd>a", first=True)
@@ -104,25 +106,36 @@ def _crawlXiaoShuoBen(url:str):
                 id = int(page.split(".")[0])
                 if lastArticleId < id:
                     lastArticleId = id
-                articleList.append({"url": urlStr, "name": item.text})
+                    articleList.append({"url": urlStr, "name": item.text})
+                    hasChange = True
 
         # save to DB
-        ben.url = url
-        ben.date = datetime.datetime.now()
-        ben.author = author.text.split("：")[-1] if author is not None else ""
-        ben.description = description.text if description is not None else ""
-        ben.image = image.attrs["src"] if image is not None else ""
-        ben.articleList = articleList
-        ben.lastArticleId = lastArticleId
-        ben.save()
-
-        FileLogger.warning(f"success crawl {titleText} on id: {url}")
+        if hasChange:
+            ben.url = url
+            ben.date = datetime.datetime.now()
+            ben.author = author.text.split("：")[-1] if author is not None else ""
+            ben.description = description.text if description is not None else ""
+            ben.image = image.attrs["src"] if image is not None else ""
+            ben.articleList = articleList
+            ben.lastArticleId = lastArticleId
+            ben.updateDate = datetime.date.today().strftime("%Y-%m-%d")
+            ben.save()
+            FileLogger.warning(f"success crawl {titleText} on id: {url}")
         return True
 
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
         return False
+
+def _getDomainFromUrl(url:str):
+    domain = re.match(r"(http[s]+://www[^/]*/).*", url)
+    if len(domain.groups()) == 0:
+        FileLogger.error(f"no domain in {url}")
+        return None
+    domain = domain.groups()[0]
+    domain = domain[0:len(domain) - 1] if domain.endswith("/") else domain
+    return domain
 
 ArticleList = []
 accessLock = Lock()
@@ -143,18 +156,14 @@ def crawlArticleMultiThread():
         ben = XiaoShuoBen.objects(title=title).first()
         if ben is None:
             FileLogger.error(f"no such ben in {title}")
-            finishXSJob(job)
+            finishJob(job)
             continue
         if ben.articleList is None or len(ben.articleList) == 0:
             FileLogger.error(f"article list is empty in {title}")
             continue
 
-        domain = re.match(r"(http[s]+://www[^/]*/).*", ben.url)
-        if len(domain.groups()) == 0:
-            FileLogger.error(f"no domain in {title}")
-            continue
-        domain = domain.groups()[0]
-        domain = domain[0:len(domain) - 1] if domain.endswith("/") else domain
+        domain = _getDomainFromUrl(ben.url)
+        if domain is None: continue
 
         while len(ArticleList) >= 500:
             time.sleep(1)
@@ -162,7 +171,7 @@ def crawlArticleMultiThread():
         while len(workingJobs) >= 5:
             workingJob = workingJobs.pop(0)
             FileLogger.warning(f"finish on {workingJob.name}")
-            finishXSJob(workingJob)
+            finishJob(workingJob)
         for article in ben.articleList:
             article["fullUrl"] = domain + article["url"]
             article["benTitle"] = ben.title
@@ -230,7 +239,7 @@ def _crawlArticle(threadId:int, url:str, benTitle:str, title:str):
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"thread {threadId} error on {url}")
-        createXSJob(category="article_error", name=url, param=[url, benTitle, title])
+        createJob(XSJob, category="article_error", name=url, param=[url, benTitle, title])
         return False
 
 # 重新爬取之前错误的articles
@@ -261,7 +270,7 @@ def reCrawlErrorArticlesMultiThread():
         url = job.param[0]
         article = XiaoShuoArticle.objects(url=url).first()
         if article is not None:
-            finishXSJob(job)
+            finishJob(job)
 
 
 def refreshAndCreateXiaoshuoBenJob():
@@ -274,8 +283,8 @@ def refreshAndCreateXiaoshuoBenJob():
             linkObj = li.find("span.s2>a", first=True)
             benId = linkObj.attrs['href'].split("/")[2]
             title = linkObj.text.strip()
-            createXSJob(category="ben", name=str(benId))
-            createXSJob(category="article", name=title)
+            createJob(XSJob, category="ben", name=str(benId))
+            createJob(XSJob, category="article", name=title)
             print(f"crawl and get new ben: {benId}")
 
     except Exception as ex:
@@ -288,13 +297,17 @@ def refreshAllBenArticle():
     count = 0
     for title in titles:
         ben = XiaoShuoBen.objects(title=title).first()
+        if ben.lastCrawledArticleId is None: ben.lastCrawledArticleId = 0
         if ben and len(ben.articleList) > 0 and ben.lastCrawledArticleId < ben.lastArticleId:
+            domain = _getDomainFromUrl(ben.url)
+            if domain is None: continue
+
             for article in ben.articleList:
                 url = article["url"]
                 page = url.split("/")[3]
-                id = page.split(".")[0]
+                id = int(page.split(".")[0])
                 if ben.lastCrawledArticleId < id <= ben.lastArticleId:
-                    _crawlArticle(0, article["url"], ben.title, article["name"])
+                    _crawlArticle(0, domain+article["url"], ben.title, article["name"])
             ben.lastCrawledArticleId = ben.lastArticleId
             ben.save()
 
@@ -302,11 +315,14 @@ def refreshAllBenArticle():
         print(f"finished refresh ben article {count} {title}")
 
 def refreshXiaoShuoBen():
+    today = datetime.date.today()
+    afterDate = (today - datetime.timedelta(days=93)).strftime("%Y-%m-%d")
     titles = XiaoShuoBen.objects().distinct("title")
     count = 0
     for title in titles:
         ben = XiaoShuoBen.objects(title=title).first()
-        _crawlXiaoShuoBen(ben.url)
+        if ben.updateDate >= afterDate:
+            _crawlXiaoShuoBen(ben.url)
 
         count += 1
         print(f"finished refresh ben {count} {title}")
