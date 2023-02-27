@@ -11,7 +11,6 @@ from mongoengine import *
 from mongoengine import Document
 from requests_html import HTMLSession
 
-
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
@@ -27,8 +26,21 @@ HEADERS = {
     "Sec-Fetch-Site": "same-origin",
     "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": '1',
-    "Cookie": "device_id=14361501bb5ad879f853195114489f65; s=ch11f0aaec; Hm_lvt_1db88642e346389874251b5a1eded6e3=1668479496; acw_tc=2760827b16684813006511104ed47646cc4a91c9880f6e939b76a1c56e4082; bid=deedac848c890be06868ef62034afc25_lahn50mk; xq_a_token=569719d00ff9bab7a495c86286732fe3340545db; xqat=569719d00ff9bab7a495c86286732fe3340545db; xq_r_token=0035d9daefeac09b3634a15fa1e32a4a98b55e73; xq_id_token=eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJ1aWQiOi0xLCJpc3MiOiJ1YyIsImV4cCI6MTY3MDg5MDcwNiwiY3RtIjoxNjY4NDgyMjc1MzQ4LCJjaWQiOiJkOWQwbjRBWnVwIn0.gaD8qqms0qEQvUsGCldZZKEQK8v3ufTBZBGd5_OJjejuZdmViIrEMqy5eRC5qYouBP1tdnJyHX8WX56GSaD68R-fdqLm6cuh0VFcsS1vsW3TWNsS1sROu40VdWjdO7Xz3M_hcyT0ZwoTP2wvQ3Sooa3aGKfU-J4I2c5OkyC2YOIRPerTwQtYAmXu7ZS59uR7XwRfOPYxNqrCj7DmqrLqa3fy90xkMwBfNTCyDFl10-8E8YZAvqf0ExYpHjDz6qoMv4AWy4QW675Axa_laoISyDHo5PD_KO50pu6gMRzXz0wt4qoCS8KekvBAYrYr-Yd73JQt1EgLcZLrPYp5OSGdAg; u=391668482307192; is_overseas=0; Hm_lpvt_1db88642e346389874251b5a1eded6e3=1668482349"
 }
+COOKIES = {
+    "device_id": "14361501bb5ad879f853195114489f65",
+    "s": "ch11f0aaec",
+    "bid": "deedac848c890be06868ef62034afc25_lahn50mk",
+    "Hm_lvt_1db88642e346389874251b5a1eded6e3": "1675431605",
+    "acw_tc": "2760779816773797051691797e58ccde3b1e6226c517f2b346d3a8135aa403",
+    "xq_a_token": "7da3658c0a79fd9ef135510bc5189429ce0e3035",
+    "xqat": "7da3658c0a79fd9ef135510bc5189429ce0e3035",
+    "xq_r_token": "c4e290f788b8c24ec35bd4b893dc8fa427e1f229",
+    "xq_id_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJ1aWQiOi0xLCJpc3MiOiJ1YyIsImV4cCI6MTY3OTk2MjkxMiwiY3RtIjoxNjc3Mzc5Njc5MDg0LCJjaWQiOiJkOWQwbjRBWnVwIn0.j6rTru_0PvFP1zxFwgbimoV4tyt7vKFfIaHvW-QO1evKgGgIAHAacqovQ4Q2V4q3hXS-JJeFSlC00hfigwMH8IV179fDp0URlnS8RHPHCxaZi2SvlbYS0BM6iAPrxy2A3trriUYsrTcO_h08Wy-lExrq8v3VLbtSKKLkWFfHgvv8bOOt37hq_Nug7TnPQxqDI2Rcsyt1948aZYvsfEJCNqmXclOsVYmBs5qoXyMyPWdVSgxnXFEZDhqlPC2DR4H93YP2CtakA_mHAQBwucKPP6r35jeFAOJ9nEmRUq05Hg4q0zdLkHyWR9voAQ3HVd62vVQd4oZnIWj_ghyKfloNFg",
+    "u": "921677379705248",
+    "Hm_lpvt_1db88642e346389874251b5a1eded6e3": "1677379714"
+}
+
 
 # https://tushare.pro/document/2?doc_id=25, 更新采用cninfo的数据
 class StockInfo(Document):
@@ -395,7 +407,16 @@ def getZhuanlanMain(update=False):
 
     session.close()
 
+def refreshCookies():
+    session = HTMLSession()
+    response = session.get("http://www.xueqiu.com")
+    for key in response.cookies.keys():
+        COOKIES[key] = response.cookies.get(key)
+
 def refreshZhuanlan():
+    # 更新cookies
+    refreshCookies()
+
     # 刷新所有股票的最热评论列表（最热也会参考时间做排序），并刷新专栏列表中的第一页
     print(f"refreshing get author jobs")
     stockCodes = [stock.code for stock in StockInfo.objects(list_status='L')]

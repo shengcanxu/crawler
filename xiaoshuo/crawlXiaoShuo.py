@@ -316,7 +316,7 @@ def refreshAllBenArticle():
 
 def refreshXiaoShuoBen():
     today = datetime.date.today()
-    afterDate = (today - datetime.timedelta(days=93)).strftime("%Y-%m-%d")
+    afterDate = (today - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
     titles = XiaoShuoBen.objects().distinct("title")
     count = 0
     for title in titles:
