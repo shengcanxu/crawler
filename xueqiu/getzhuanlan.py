@@ -200,7 +200,7 @@ def finishJob(job: ZhihuJob):
 # https://xueqiu.com/query/v1/symbol/search/status.json?count=10&comment=0&symbol=SZ002511&hl=0&source=all&sort=alpha&page=1&q=&type=11
 # 从雪球股票精华评论中筛选出用户列表。 这里是从https://xueqiu.com/S/SZ002511 上拿到页面并生成N个GET_AUTHOR任务。
 def getExpandStock(url: str, session):
-    response = session.get(url, headers=HEADERS)
+    response = session.get(url, headers=HEADERS, cookies=COOKIES)
     content = json.loads(response.content)
     if content is None or content.get("maxPage", None) is None:
         return False
@@ -221,7 +221,7 @@ def getExpandStock(url: str, session):
 # https://xueqiu.com/query/v1/symbol/search/status.json?count=10&comment=0&symbol=SZ002511&hl=0&source=all&sort=alpha&page=1&q=&type=11
 # # 从雪球股票精华评论中筛选出用户列表。只选择发表专栏的用户。 flags == 171798694912 or flags == 446676601856是专栏
 def getZhuanlanAuthor(url:str, session): # return fetch status, fetch count
-    response = session.get(url, headers=HEADERS)
+    response = session.get(url, headers=HEADERS, cookies=COOKIES)
     content = json.loads(response.content)
     if content is None: return False, 0
 
@@ -252,7 +252,7 @@ def getZhuanlanAuthor(url:str, session): # return fetch status, fetch count
 # https://xueqiu.com/statuses/original/timeline.json?user_id=9481034446&page=1
 # 从用户专栏中爬取文章列表。 以上链接就是从https://xueqiu.com/u/9481034446 中获得
 def getZhuanlanList(url:str, userid, session, update=False):  # return fetch status, fetch number
-    response = session.get(url, headers=HEADERS)
+    response = session.get(url, headers=HEADERS, cookies=COOKIES)
     content = json.loads(response.content)
     if content is None: return False, 0
 
@@ -297,7 +297,7 @@ def getZhuanlanList(url:str, userid, session, update=False):  # return fetch sta
 # https://xueqiu.com/9481034446/210452094
 # 爬取文章内容，并从文章的链接中抽取出后续要爬取的股票
 def getZhuanlanArticle(url:str, view_count:int, session):
-    response = session.get(url, headers=HEADERS)
+    response = session.get(url, headers=HEADERS, cookies=COOKIES)
     article_content = response.html.find("article.article__bd", first=True)
     if article_content is not None:
         html = article_content.html
@@ -408,27 +408,27 @@ def getZhuanlanMain(update=False):
     session.close()
 
 def refreshCookies():
+    global COOKIES
     session = HTMLSession()
     response = session.get("http://www.xueqiu.com")
-    for key in response.cookies.keys():
-        COOKIES[key] = response.cookies.get(key)
+    COOKIES = session.cookies
 
 def refreshZhuanlan():
     # 更新cookies
     refreshCookies()
 
     # 刷新所有股票的最热评论列表（最热也会参考时间做排序），并刷新专栏列表中的第一页
-    print(f"refreshing get author jobs")
-    stockCodes = [stock.code for stock in StockInfo.objects(list_status='L')]
-    for code in stockCodes:
-        url = "https://xueqiu.com/query/v1/symbol/search/status.json?count=10&comment=0&symbol=%s&hl=0&source=all&sort=alpha&page=1&q=&type=11" % code
-        createJob(url, JobType.GET_AUTHOR, updateWhenExists=True)
-
-    print(f"refreshing get list jobs")
-    userIds = [str(user.userid) for user in Author.objects()]
-    for userId in userIds:
-        url = "https://xueqiu.com/statuses/original/timeline.json?user_id=%s&page=1" % userId
-        createJob(url, JobType.GET_LIST, [int(userId)], updateWhenExists=True)
+    # print(f"refreshing get author jobs")
+    # stockCodes = [stock.code for stock in StockInfo.objects(list_status='L')]
+    # for code in stockCodes:
+    #     url = "https://xueqiu.com/query/v1/symbol/search/status.json?count=10&comment=0&symbol=%s&hl=0&source=all&sort=alpha&page=1&q=&type=11" % code
+    #     createJob(url, JobType.GET_AUTHOR, updateWhenExists=True)
+    #
+    # print(f"refreshing get list jobs")
+    # userIds = [str(user.userid) for user in Author.objects()]
+    # for userId in userIds:
+    #     url = "https://xueqiu.com/statuses/original/timeline.json?user_id=%s&page=1" % userId
+    #     createJob(url, JobType.GET_LIST, [int(userId)], updateWhenExists=True)
 
     getZhuanlanMain(update=True)
 
