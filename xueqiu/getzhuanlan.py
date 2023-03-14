@@ -418,17 +418,17 @@ def refreshZhuanlan():
     refreshCookies()
 
     # 刷新所有股票的最热评论列表（最热也会参考时间做排序），并刷新专栏列表中的第一页
-    # print(f"refreshing get author jobs")
-    # stockCodes = [stock.code for stock in StockInfo.objects(list_status='L')]
-    # for code in stockCodes:
-    #     url = "https://xueqiu.com/query/v1/symbol/search/status.json?count=10&comment=0&symbol=%s&hl=0&source=all&sort=alpha&page=1&q=&type=11" % code
-    #     createJob(url, JobType.GET_AUTHOR, updateWhenExists=True)
-    #
-    # print(f"refreshing get list jobs")
-    # userIds = [str(user.userid) for user in Author.objects()]
-    # for userId in userIds:
-    #     url = "https://xueqiu.com/statuses/original/timeline.json?user_id=%s&page=1" % userId
-    #     createJob(url, JobType.GET_LIST, [int(userId)], updateWhenExists=True)
+    print(f"refreshing get author jobs")
+    stockCodes = [stock.code for stock in StockInfo.objects(list_status='L')]
+    for code in stockCodes:
+        url = "https://xueqiu.com/query/v1/symbol/search/status.json?count=10&comment=0&symbol=%s&hl=0&source=all&sort=alpha&page=1&q=&type=11" % code
+        createJob(url, JobType.GET_AUTHOR, updateWhenExists=True)
+
+    print(f"refreshing get list jobs")
+    userIds = [str(user.userid) for user in Author.objects()]
+    for userId in userIds:
+        url = "https://xueqiu.com/statuses/original/timeline.json?user_id=%s&page=1" % userId
+        createJob(url, JobType.GET_LIST, [int(userId)], updateWhenExists=True)
 
     getZhuanlanMain(update=True)
 

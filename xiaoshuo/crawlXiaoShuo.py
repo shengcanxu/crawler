@@ -1,8 +1,8 @@
 import time
 from threading import Thread, Lock
-from utils.Job import  createJob, finishJob, XSJob, createOrUpdateJob
+from utils.Job import createJob, finishJob, createOrUpdateJob
 import datetime
-from mongoengine import connect, Document, StringField, IntField, ListField, DateTimeField
+from mongoengine import connect, Document, StringField, IntField, ListField, DateTimeField, BooleanField
 from requests_html import HTMLSession
 from utils.logger import FileLogger
 import re
@@ -13,6 +13,21 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate",
     "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-TW;q=0.6"
 }
+
+class XSJob(Document):
+    category = StringField(required=True)  # job分型
+    name = StringField(required=True)  # job名称，一般是标识出不同的job，起job_id作用
+    finished = BooleanField(requests=True, default=False)  # 是否已经完成
+    createDate = DateTimeField(required=True)  # 创建时间
+    tryDate = DateTimeField(required=False)  # 尝试运行时间
+    param = ListField(require=False)  # 参数
+    lastUpdateDate = DateTimeField(required=False)  # 最后一次更新时间，主要用于需要周期更新的任务
+    daySpan = IntField(required=False)  # 每次更新的间隔，主要用于需要周期更新的任务
+    meta = {
+        "strict": True,
+        "collection": "job",
+        "db_alias": "xiaoshuo"
+    }
 
 class XiaoShuoBen(Document):
     url = StringField(required=True)

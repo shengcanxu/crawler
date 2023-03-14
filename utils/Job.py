@@ -8,21 +8,6 @@ JOB_FINISHED = 0
 JOB_FINISHED_LAST = 0
 JOB_LAST_TIME = datetime.datetime.now()
 
-class XSJob(Document):
-    category = StringField(required=True)  # job分型
-    name = StringField(required=True)  # job名称，一般是标识出不同的job，起job_id作用
-    finished = BooleanField(requests=True, default=False)  # 是否已经完成
-    createDate = DateTimeField(required=True)  # 创建时间
-    tryDate = DateTimeField(required=False)  # 尝试运行时间
-    param = ListField(require=False)  # 参数
-    lastUpdateDate = DateTimeField(required=False)  # 最后一次更新时间，主要用于需要周期更新的任务
-    daySpan = IntField(required=False)  # 每次更新的间隔，主要用于需要周期更新的任务
-    meta = {
-        "strict": True,
-        "collection": "job",
-        "db_alias": "xiaoshuo"
-    }
-
 # 输出新创建和完成的job数量
 def printJobStatistic():
     global JOB_CREATED, JOB_FINISHED, JOB_LAST_TIME, JOB_CREATED_LAST, JOB_FINISHED_LAST
