@@ -81,7 +81,7 @@ class DoubanBook(Document):
         "db_alias": "douban"
     }
 
-# 爬取豆瓣书本的种类列表
+# 爬取豆瓣书本的种类列表, https://book.douban.com/tag/?view=type&icn=index-sorttags-all
 def crawlCategoryList():
     url = "https://book.douban.com/tag/"
     session = HTMLSession()
@@ -98,7 +98,7 @@ def crawlCategoryList():
         return False
 
 
-# 爬取某一个种类豆瓣书本的列表
+# 爬取某一个种类豆瓣书本的列表 e.g.: https://book.douban.com/tag/%E9%9A%8F%E7%AC%94
 def crawlBookList(url:str):
     session = HTMLSession()
     try:
@@ -109,7 +109,7 @@ def crawlBookList(url:str):
             createJob(DoubanJob, category="book", name=aTagUrl)
             if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
                 doulistUrl = aTagUrl + "doulists"
-                createJob(DoubanJob, category="doulist", name=doulistUrl)
+                createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
             FileLogger.warning(f"create book job on {aTagUrl}")
 
         # 下一页
@@ -175,7 +175,7 @@ def crawlDouList(url:str):
                 createJob(DoubanJob, category="book", name=aTagUrl)
                 if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
                     doulistUrl = aTagUrl + "doulists"
-                    createJob(DoubanJob, category="doulist", name=doulistUrl)
+                    createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
                 FileLogger.warning(f"create book job on {aTagUrl}")
                 doulist.bookList.append({"url":aTagUrl, "title":atag.text})
             doulist.save()
@@ -309,7 +309,7 @@ def crawlBook(url:str):
             createJob(DoubanJob, category="book", name=aTagUrl)
             if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
                 doulistUrl = aTagUrl + "doulists"
-                createJob(DoubanJob, category="doulist", name=doulistUrl)
+                createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
             FileLogger.warning(f"create book job on {aTagUrl}")
 
         book.save()
@@ -322,7 +322,7 @@ def crawlBook(url:str):
 
 def crawlDoubanBook():
     def createJobWorker(itemList:list):
-        for job in DoubanJob.objects(finished=False, category="doulist").limit(500):
+        for job in DoubanJob.objects(finished=False).limit(500):
             url = job.name
             category = job.category
             itemList.append({
@@ -372,3 +372,10 @@ if __name__ == "__main__":
     # crawlDouList("https://www.douban.com/doulist/1262364/?start=125&sort=time&playable=0&sub_type=")
 
     # crawlBookDouList("https://book.douban.com/subject/34501169/doulists")
+
+    # for job in DoubanJob.objects(category="book"):
+    #     aTagUrl = job.name
+    #     if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
+    #         doulistUrl = aTagUrl + "doulists"
+    #         createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
+    #         FileLogger.info(f"{doulistUrl}")
