@@ -88,6 +88,8 @@ def crawlCategoryList():
     session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        if response is None: return False
+
         aTagList = response.html.find("div.article table td a")
         for tag in aTagList:
             tagUrl = "https://book.douban.com%s" % tag.attrs["href"]
@@ -105,6 +107,8 @@ def crawlBookList(url:str):
     session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        if response is None: return False
+
         aTagList = response.html.find("#subject_list li div.info h2 a")
         for atag in aTagList:
             aTagUrl = atag.attrs["href"]
@@ -133,6 +137,8 @@ def crawlBookDouList(url:str):
     session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        if response is None: return False
+
         aTagList = response.html.find("#content ul.doulist-list li h3 a")
         if aTagList:
             for atag in aTagList:
@@ -168,6 +174,8 @@ def crawlDouList(url:str):
     session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        if response is None: return False
+
         if doulist.title is None:
             titleElem = response.html.find("#content h1 span", first=True)
             doulist.title = titleElem.text if titleElem and len(titleElem.text) > 0 else None
@@ -212,8 +220,9 @@ def crawlBook(url:str):
     session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
-        html = response.html.find("#wrapper", first=True)
+        if response is None: return False
 
+        html = response.html.find("#wrapper", first=True)
         titleElem = html.find("h1 span", first=True)
         book.title = titleElem.text if titleElem is not None else ""
         pictureElem = html.find("#mainpic img", first=True)
@@ -363,7 +372,7 @@ def crawlDoubanBook():
         time.sleep(1)
         return succ
 
-    worker = MultiThreadQueueWorker(threadNum=10, minQueueSize=500, crawlFunc=crawlWorker, createJobFunc=createJobWorker)
+    worker = MultiThreadQueueWorker(threadNum=100, minQueueSize=500, crawlFunc=crawlWorker, createJobFunc=createJobWorker)
     worker.start()
 
 if __name__ == "__main__":

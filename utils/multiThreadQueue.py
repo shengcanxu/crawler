@@ -20,11 +20,17 @@ class MultiThreadQueueWorker:
         self.crawlFunc = crawlFunc
         self.createJobFunc = createJobFunc
 
-    def start(self):
+    def startAllThreads(self):
         for i in range(self.threadNum):
             thread = Thread(target=self.worker, args=[i])
             self.threadList.append(thread)
             thread.start()
+            time.sleep(1)
+
+    def start(self):
+        # 使用一个单独的thread来逐步启动所有线程
+        startThread = Thread(target=self.startAllThreads)
+        startThread.start()
 
         if self.crawlFunc is None or self.createJobFunc is None:
             print("please provide the crawlFunc and createJobFunc")

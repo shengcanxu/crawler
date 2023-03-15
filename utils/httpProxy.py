@@ -49,31 +49,39 @@ def startProxy(mode:ProxyMode):
         thread.start()
 
 class HTMLSessionWrapper():
-    def __init__(self, session:HTMLSession, proxy:str):
-        self.session = session
+    def __init__(self,  proxy:str):
+        self.session = HTMLSession()
         self.proxy = proxy
 
     def markRequestFails(self):
-        if self.proxy is None: return
+        if self.proxy is None or self.proxy not in HTTP_PROXY_MAP: return
         HTTP_PROXY_MAP[self.proxy]["fails"] += 1
         if HTTP_PROXY_MAP[self.proxy]["fails"] >= 5:
             del HTTP_PROXY_MAP[self.proxy]
 
     def get(self, url, headers=None, cookies=None):
+        proxies = {"http": "http://"+self.proxy, "https": "http://"+self.proxy}
+        self.session.proxies = proxies
         response = self.session.get(url, headers=headers, cookies=cookies)
         if response.status_code != 200:
             self.markRequestFails()
+            return None
         return response
 
     def post(self, url, headers=None, cookies=None):
         response = self.session.post(url, headers=headers, cookies=cookies)
         if response.status_code != 200:
             self.markRequestFails()
+            return None
         return response
 
 def getProxyString():
     global HTTP_PROXY_MAP, HTTP_PROXY_MODE
     while True:
+        if len(HTTP_PROXY_MAP) == 0:
+            time.sleep(1)
+            continue
+
         if HTTP_PROXY_MODE == ProxyMode.SINGLE_PROXY:
             proxy, _ = HTTP_PROXY_MAP.popitem()
         else:
@@ -94,7 +102,6 @@ def getHTMLSession():
     global HTTP_PROXY_MODE
     if HTTP_PROXY_MODE == ProxyMode.SINGLE_PROXY or HTTP_PROXY_MODE == ProxyMode.PROXY_POOL:
         proxy = getProxyString()
-        session = HTMLSession(browser_args=["--proxy-server=%s" % proxy])
-        return HTMLSessionWrapper(session, proxy)
+        return HTMLSessionWrapper(proxy)
     else:
-        return HTMLSessionWrapper(HTMLSession(), None)
+        return HTMLSessionWrapper(None)
