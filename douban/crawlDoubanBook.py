@@ -3,6 +3,7 @@ import re
 from mongoengine import Document
 from mongoengine import connect, Document, EmbeddedDocument, ListField, StringField, IntField, FloatField, ListField, DateTimeField, BooleanField
 from requests_html import HTMLSession
+from utils.httpProxy import ProxyMode, startProxy, getHTMLSession
 from utils.Job import createJob, createOrUpdateJob, finishJob
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
@@ -84,7 +85,7 @@ class DoubanBook(Document):
 # 爬取豆瓣书本的种类列表, https://book.douban.com/tag/?view=type&icn=index-sorttags-all
 def crawlCategoryList():
     url = "https://book.douban.com/tag/"
-    session = HTMLSession()
+    session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
         aTagList = response.html.find("div.article table td a")
@@ -95,12 +96,13 @@ def crawlCategoryList():
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
+        session.markRequestFails()
         return False
 
 
 # 爬取某一个种类豆瓣书本的列表 e.g.: https://book.douban.com/tag/%E9%9A%8F%E7%AC%94
 def crawlBookList(url:str):
-    session = HTMLSession()
+    session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
         aTagList = response.html.find("#subject_list li div.info h2 a")
@@ -110,7 +112,7 @@ def crawlBookList(url:str):
             if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
                 doulistUrl = aTagUrl + "doulists"
                 createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
-            FileLogger.warning(f"create book job on {aTagUrl}")
+        FileLogger.warning(f"parsed {len(aTagList)} books")
 
         # 下一页
         paginators = response.html.find("#subject_list div.paginator a")
@@ -123,11 +125,12 @@ def crawlBookList(url:str):
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
+        session.markRequestFails()
         return False
 
 # 爬取book的豆列 列表
 def crawlBookDouList(url:str):
-    session = HTMLSession()
+    session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
         aTagList = response.html.find("#content ul.doulist-list li h3 a")
@@ -149,6 +152,7 @@ def crawlBookDouList(url:str):
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
+        session.markRequestFails()
         return False
 
 # 爬取豆列
@@ -161,7 +165,7 @@ def crawlDouList(url:str):
     if doulist is None:
         doulist = DouList(douListId=douListId)
 
-    session = HTMLSession()
+    session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
         if doulist.title is None:
@@ -176,8 +180,8 @@ def crawlDouList(url:str):
                 if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
                     doulistUrl = aTagUrl + "doulists"
                     createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
-                FileLogger.warning(f"create book job on {aTagUrl}")
                 doulist.bookList.append({"url":aTagUrl, "title":atag.text})
+            FileLogger.warning(f"parsed {len(aTagList)} books")
             doulist.save()
 
         # 下一页
@@ -192,6 +196,7 @@ def crawlDouList(url:str):
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
+        session.markRequestFails()
         return False
 
 def crawlBook(url:str):
@@ -204,7 +209,7 @@ def crawlBook(url:str):
         book = DoubanBook(bookId=bookId)
     book.url = url
 
-    session = HTMLSession()
+    session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
         html = response.html.find("#wrapper", first=True)
@@ -213,6 +218,9 @@ def crawlBook(url:str):
         book.title = titleElem.text if titleElem is not None else ""
         pictureElem = html.find("#mainpic img", first=True)
         book.picture = pictureElem.attrs["src"] if pictureElem is not None else ""
+        if len(book.title) == 0 or len(book.picture) == 0:
+            session.markRequestFails()
+            return False
 
         # 获得书本基本信息
         infoElem = html.find("#info", first=True)
@@ -310,7 +318,7 @@ def crawlBook(url:str):
             if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
                 doulistUrl = aTagUrl + "doulists"
                 createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
-            FileLogger.warning(f"create book job on {aTagUrl}")
+        FileLogger.warning(f"parsed {len(bookElemList)} books")
 
         book.save()
         return True
@@ -318,6 +326,7 @@ def crawlBook(url:str):
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
+        session.markRequestFails()
         return False
 
 def crawlDoubanBook():
@@ -348,13 +357,13 @@ def crawlDoubanBook():
 
         if succ:
             finishJob(job)
-            FileLogger.warning(f"[{threadId}] success on {url}")
+            FileLogger.warning(f"[{threadId}] success on {url} of {category}")
         else:
-            FileLogger.error(f"[{threadId}] fail on {url}")
+            FileLogger.error(f"[{threadId}] fail on {url} of {category}")
         time.sleep(1)
         return succ
 
-    worker = MultiThreadQueueWorker(threadNum=1, minQueueSize=500, crawlFunc=crawlWorker, createJobFunc=createJobWorker)
+    worker = MultiThreadQueueWorker(threadNum=10, minQueueSize=500, crawlFunc=crawlWorker, createJobFunc=createJobWorker)
     worker.start()
 
 if __name__ == "__main__":
@@ -362,6 +371,7 @@ if __name__ == "__main__":
 
     # crawlCategoryList()
 
+    startProxy(mode=ProxyMode.PROXY_POOL)
     crawlDoubanBook()
 
     # crawlBook("https://book.douban.com/subject/34501169/")
