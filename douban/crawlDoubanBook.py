@@ -36,6 +36,7 @@ class DoubanJob(Document):
 class DouList(Document):
     douListId = StringField(required=True)
     title = StringField()
+    follows = IntField()
     bookList = ListField() # 会有重复内容
     meta = {
         "strict": True,
@@ -114,9 +115,9 @@ def crawlBookList(url:str):
         for atag in aTagList:
             aTagUrl = atag.attrs["href"]
             createJob(DoubanJob, category="book", name=aTagUrl)
-            if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
-                doulistUrl = aTagUrl + "doulists"
-                createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
+            # if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
+            #     doulistUrl = aTagUrl + "doulists"
+            #     createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
         FileLogger.warning(f"parsed {len(aTagList)} books")
 
         # 下一页
@@ -180,15 +181,20 @@ def crawlDouList(url:str):
         if doulist.title is None:
             titleElem = response.html.find("#content h1 span", first=True)
             doulist.title = titleElem.text if titleElem and len(titleElem.text) > 0 else None
+        followElem = response.html.find("#content a.doulist-followers-link", first=True)
+        doulist.follows = int(followElem.text) if followElem is not None and len(followElem.text.strip()) > 0 else 0
 
         aTagList = response.html.find("#content div.doulist-item div.title a")
         if aTagList:
             for atag in aTagList:
                 aTagUrl = atag.attrs["href"]
+                if aTagUrl.find("book.douban.com") < 0: continue
                 createJob(DoubanJob, category="book", name=aTagUrl)
-                if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
-                    doulistUrl = aTagUrl + "doulists"
-                    createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
+                # if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
+                #     doulistUrl = aTagUrl + "doulists"
+                #     createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
+
+                #TODO： 会有重复的内容
                 doulist.bookList.append({"url":aTagUrl, "title":atag.text})
             FileLogger.warning(f"parsed {len(aTagList)} books")
             doulist.save()
@@ -328,11 +334,17 @@ def crawlBook(url:str):
             aTagUrl = aTagElem.attrs["href"]
             relatedBooks.append(aTagUrl)
             createJob(DoubanJob, category="book", name=aTagUrl)
-            if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
-                doulistUrl = aTagUrl + "doulists"
-                createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
+            # if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
+            #     doulistUrl = aTagUrl + "doulists"
+            #     createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
         book.relatedBooks = relatedBooks
         FileLogger.warning(f"parsed {len(bookElemList)} books")
+
+        # 豆列（书单）
+        doulistElems = html.find("#db-doulist-section li a")
+        for aTagElem in doulistElems:
+            aTagUrl = aTagElem.attrs["href"]
+            createJob(DoubanJob, category="doulist", name=aTagUrl)
 
         book.save()
         return True
@@ -397,10 +409,3 @@ if __name__ == "__main__":
     # crawlDouList("https://www.douban.com/doulist/1262364/?start=125&sort=time&playable=0&sub_type=")
 
     # crawlBookDouList("https://book.douban.com/subject/34501169/doulists")
-
-    # for job in DoubanJob.objects(category="book"):
-    #     aTagUrl = job.name
-    #     if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
-    #         doulistUrl = aTagUrl + "doulists"
-    #         createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
-    #         FileLogger.info(f"{doulistUrl}")

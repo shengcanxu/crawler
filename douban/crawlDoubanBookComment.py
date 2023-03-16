@@ -259,10 +259,10 @@ def crawlDouobanComment():
 if __name__ == "__main__":
     connect(db="douban", alias="douban", username="canoxu", password="4401821211", authentication_source='admin')
 
-    # createCrawlJob()
+    createCrawlJob()
 
     # crawlDouobanComment()
 
     # crawlBookComment("https://book.douban.com/subject/36122667/comments/?start=40&limit=20&status=P&sort=time", "36122667")
 
-    crawlBookReview("https://book.douban.com/subject/36122667/reviews?sort=time&start=20", "36122667")
+    # crawlBookReview("https://book.douban.com/subject/36122667/reviews?sort=time&start=20", "36122667")
