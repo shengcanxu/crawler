@@ -4,7 +4,7 @@ from mongoengine import Document
 from mongoengine import connect, Document, EmbeddedDocument, ListField, StringField, IntField, FloatField, ListField, DateTimeField, BooleanField
 from requests_html import HTMLSession
 from utils.httpProxy import ProxyMode, startProxy, getHTMLSession
-from utils.Job import createJob, createOrUpdateJob, finishJob
+from utils.Job import createJob, createOrUpdateJob, finishJob, failJob
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
 
@@ -75,6 +75,7 @@ class DoubanBook(Document):
     catalog = StringField() # 目录
     commentNum = IntField() # 评论数量
     reviewNum = IntField() # 书评数量
+    relatedBooks = ListField()
 
     meta = {
         "strict": True,
@@ -144,14 +145,14 @@ def crawlBookDouList(url:str):
             for atag in aTagList:
                 aTagUrl = atag.attrs["href"]
                 createJob(DoubanJob, category="doulist", name=aTagUrl)
-                FileLogger.warning(f"create doulist job on {aTagUrl}")
+                # FileLogger.warning(f"create doulist job on {aTagUrl}")
 
         # 下一页
         paginators = response.html.find("#content div.paginator a")
         for atag in paginators:
             aTagUrl = atag.attrs["href"]
             createJob(DoubanJob, category="bookdoulist", name=aTagUrl)
-            FileLogger.warning(f"create bookdoulist job on {aTagUrl}")
+            # FileLogger.warning(f"create bookdoulist job on {aTagUrl}")
 
         return True
 
@@ -197,7 +198,7 @@ def crawlDouList(url:str):
         for atag in paginators:
             aTagUrl = atag.attrs["href"]
             createJob(DoubanJob, category="doulist", name=aTagUrl)
-            FileLogger.warning(f"create doulist job on {aTagUrl}")
+            # FileLogger.warning(f"create doulist job on {aTagUrl}")
 
         return True
 
@@ -223,6 +224,7 @@ def crawlBook(url:str):
         if response is None: return False
 
         html = response.html.find("#wrapper", first=True)
+        if html is None:return False
         titleElem = html.find("h1 span", first=True)
         book.title = titleElem.text if titleElem is not None else ""
         pictureElem = html.find("#mainpic img", first=True)
@@ -298,7 +300,7 @@ def crawlBook(url:str):
             book.contentDes = contentDesElemList[-1].text
         tags = html.find("#content div.related_info>h2,div.indent")
         for index, tag in enumerate(tags):
-            if tag.tag == 'h2' and tag.text.strip().startswith("作者简介") and index < len(tags)-1:
+            if tag.tag == 'h2' and tag.text.strip().startswith("作者简介") and index < len(tags)-1 and tags[index+1] is not None:
                 introElem = tags[index+1].find("div.intro", first=True)
                 if introElem:
                     book.authorDes = introElem.text
@@ -321,12 +323,15 @@ def crawlBook(url:str):
 
         # 也喜欢部分
         bookElemList = html.find("#db-rec-section div.content dt a")
+        relatedBooks = []
         for aTagElem in bookElemList:
             aTagUrl = aTagElem.attrs["href"]
+            relatedBooks.append(aTagUrl)
             createJob(DoubanJob, category="book", name=aTagUrl)
             if re.match(r"^https://book.douban.com/subject/\d+/", aTagUrl):
                 doulistUrl = aTagUrl + "doulists"
                 createJob(DoubanJob, category="bookdoulist", name=doulistUrl)
+        book.relatedBooks = relatedBooks
         FileLogger.warning(f"parsed {len(bookElemList)} books")
 
         book.save()
@@ -340,7 +345,7 @@ def crawlBook(url:str):
 
 def crawlDoubanBook():
     def createJobWorker(itemList:list):
-        for job in DoubanJob.objects(finished=False).limit(500):
+        for job in DoubanJob.objects(finished=False).order_by("+tryDate").limit(500):
             url = job.name
             category = job.category
             itemList.append({
@@ -353,7 +358,7 @@ def crawlDoubanBook():
         job = item["job"]
         url = item["url"]
         category = item["category"]
-        FileLogger.info(f"[{threadId}] working on {url} of {category}")
+        # FileLogger.info(f"[{threadId}] working on {url} of {category}")
         succ = False
         if category == "booklist":
             succ = crawlBookList(url)
@@ -368,6 +373,7 @@ def crawlDoubanBook():
             finishJob(job)
             FileLogger.warning(f"[{threadId}] success on {url} of {category}")
         else:
+            failJob(job)
             FileLogger.error(f"[{threadId}] fail on {url} of {category}")
         time.sleep(1)
         return succ

@@ -13,6 +13,8 @@ class ProxyMode(Enum):
 
 HTTP_PROXY_MAP = {}
 HTTP_PROXY_MODE = ProxyMode.NO_PROXY
+PROXY_RETRYS = 15
+PROXY_LAST_SECONDS = 120
 
 def fetchProxy():
     url = "https://api.xiaoxiangdaili.com/ip/get?appKey=953181634197606400&appSecret=ZWFW5ieW&cnt=&wt=text"
@@ -37,7 +39,7 @@ def startFetchProxy():
                 "fails": 0
             }
             FileLogger.info(f"get a new proxy: {proxy}, there are {len(HTTP_PROXY_MAP)} proxies.")
-            time.sleep(12)
+            time.sleep(11)
 
 # 设置代理。 如果有代理会启动额外线程从网上的线程获取接口获得并维护线程
 def startProxy(mode:ProxyMode):
@@ -56,20 +58,24 @@ class HTMLSessionWrapper():
     def markRequestFails(self):
         if self.proxy is None or self.proxy not in HTTP_PROXY_MAP: return
         HTTP_PROXY_MAP[self.proxy]["fails"] += 1
-        if HTTP_PROXY_MAP[self.proxy]["fails"] >= 5:
+        if HTTP_PROXY_MAP[self.proxy]["fails"] >= PROXY_RETRYS:
             del HTTP_PROXY_MAP[self.proxy]
 
     def get(self, url, headers=None, cookies=None):
-        proxies = {"http": "http://"+self.proxy, "https": "http://"+self.proxy}
-        self.session.proxies = proxies
-        response = self.session.get(url, headers=headers, cookies=cookies)
+        if self.proxy:
+            proxies = {"http": "http://"+self.proxy, "https": "http://"+self.proxy}
+            self.session.proxies = proxies
+        response = self.session.get(url, headers=headers, cookies=cookies, timeout=10)
         if response.status_code != 200:
             self.markRequestFails()
             return None
         return response
 
     def post(self, url, headers=None, cookies=None):
-        response = self.session.post(url, headers=headers, cookies=cookies)
+        if self.proxy:
+            proxies = {"http": "http://" + self.proxy, "https": "http://" + self.proxy}
+            self.session.proxies = proxies
+        response = self.session.post(url, headers=headers, cookies=cookies, timeout=10)
         if response.status_code != 200:
             self.markRequestFails()
             return None
@@ -82,17 +88,17 @@ def getProxyString():
             time.sleep(1)
             continue
 
+        proxies = list(HTTP_PROXY_MAP)
         if HTTP_PROXY_MODE == ProxyMode.SINGLE_PROXY:
-            proxy, _ = HTTP_PROXY_MAP.popitem()
+            proxy, _ = proxies[-1]
         else:
-            proxies = list(HTTP_PROXY_MAP)
             index = random.randrange(0, len(proxies))
             proxy = proxies[index]
 
         meta = HTTP_PROXY_MAP[proxy]
-        if meta["fails"] >= 5:
+        if meta["fails"] >= PROXY_RETRYS:
             del HTTP_PROXY_MAP[proxy]
-        elif time.time() - meta["timestamp"] >= 120: # 大于两分钟IP已经过期
+        elif time.time() - meta["timestamp"] >= PROXY_LAST_SECONDS: # 大于两分钟IP已经过期
             del HTTP_PROXY_MAP[proxy]
         else:
             return proxy

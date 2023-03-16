@@ -1,7 +1,7 @@
 # 用于多线程执行爬虫程序
 # python多线程教程：https://www.cnblogs.com/yuanwt93/p/15886333.html
 
-from threading import Thread, Lock
+from threading import Thread, Lock, Event
 import time
 
 class MultiThreadQueueWorker:
@@ -21,10 +21,13 @@ class MultiThreadQueueWorker:
         self.createJobFunc = createJobFunc
 
     def startAllThreads(self):
+        threadList = []
         for i in range(self.threadNum):
+            event = Event()
             thread = Thread(target=self.worker, args=[i])
             self.threadList.append(thread)
             thread.start()
+            threadList.append(thread)
             time.sleep(1)
 
     def start(self):
@@ -54,27 +57,33 @@ class MultiThreadQueueWorker:
         errorCount = 0
         sleepSeconds = 0
         while True:
-            self.accessLock.acquire()
-            item = self.itemList.pop() if len(self.itemList) > 0 else None
-            self.accessLock.release()
-            if item is None:
-                time.sleep(1)
-                sleepSeconds += 1
-                if sleepSeconds >= 60:
-                    break
-                else:
-                    print(f"thread {threadId} sleeps {sleepSeconds} seconds")
-                    continue
-            sleepSeconds = 0
-
-            succ = self.crawlFunc(threadId, item)
-            if succ is False:
-                errorCount += 1
-                if errorCount >= 5:
-                    time.sleep(30)
-                    errorCount = 0
-                else:
+            try:
+                self.accessLock.acquire()
+                item = self.itemList.pop() if len(self.itemList) > 0 else None
+                self.accessLock.release()
+                if item is None:
                     time.sleep(1)
+                    sleepSeconds += 1
+                    if sleepSeconds >= 60:
+                        break
+                    else:
+                        print(f"thread {threadId} sleeps {sleepSeconds} seconds")
+                        continue
+                sleepSeconds = 0
+
+                succ = self.crawlFunc(threadId, item)
+                if succ is False:
+                    errorCount += 1
+                    if errorCount >= 5:
+                        time.sleep(30)
+                        errorCount = 0
+                    else:
+                        time.sleep(1)
+
+            except Exception as ex:
+                print(ex)
+                print(f"error on thread {threadId}")
+                time.sleep(3)
 
 def tryworker():
     def createJobWorker(itemList:list):
