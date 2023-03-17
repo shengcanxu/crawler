@@ -97,6 +97,8 @@ def crawlCategoryList():
             tagUrl = "https://book.douban.com%s" % tag.attrs["href"]
             createJob(DoubanJob, category="booklist", name=tagUrl)
 
+        session.markRequestSuccess()
+
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
@@ -126,6 +128,8 @@ def crawlBookList(url:str):
             aTagUrl = "https://book.douban.com%s" % atag.attrs["href"]
             createJob(DoubanJob, category="booklist", name=aTagUrl)
             FileLogger.warning(f"create booklist job on {aTagUrl}")
+
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:
@@ -155,6 +159,7 @@ def crawlBookDouList(url:str):
             createJob(DoubanJob, category="bookdoulist", name=aTagUrl)
             # FileLogger.warning(f"create bookdoulist job on {aTagUrl}")
 
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:
@@ -206,6 +211,7 @@ def crawlDouList(url:str):
             createJob(DoubanJob, category="doulist", name=aTagUrl)
             # FileLogger.warning(f"create doulist job on {aTagUrl}")
 
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:
@@ -347,6 +353,7 @@ def crawlBook(url:str):
             createJob(DoubanJob, category="doulist", name=aTagUrl)
 
         book.save()
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:

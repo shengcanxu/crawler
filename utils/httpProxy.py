@@ -13,7 +13,7 @@ class ProxyMode(Enum):
 
 HTTP_PROXY_MAP = {}
 HTTP_PROXY_MODE = ProxyMode.NO_PROXY
-PROXY_RETRYS = 15
+PROXY_RETRYS = 10
 PROXY_LAST_SECONDS = 120
 
 def fetchProxy():
@@ -60,6 +60,10 @@ class HTMLSessionWrapper():
         HTTP_PROXY_MAP[self.proxy]["fails"] += 1
         if HTTP_PROXY_MAP[self.proxy]["fails"] >= PROXY_RETRYS:
             del HTTP_PROXY_MAP[self.proxy]
+
+    def markRequestSuccess(self):
+        if self.proxy is None or self.proxy not in HTTP_PROXY_MAP: return
+        HTTP_PROXY_MAP[self.proxy]["fails"] = max(0, HTTP_PROXY_MAP[self.proxy]["fails"] - 1)
 
     def get(self, url, headers=None, cookies=None):
         if self.proxy:

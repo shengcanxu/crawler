@@ -140,6 +140,7 @@ def crawlBookComment(url:str, bookId:str):
             createJob(DoubanCommentJob, category="bookcomment", name=aTagUrl, param=[bookId])
             # FileLogger.warning(f"create bookcomment job on {aTagUrl}")
 
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:
@@ -210,6 +211,7 @@ def crawlBookReview(url:str, bookId:str):
             createJob(DoubanCommentJob, category="bookreview", name=aTagUrl, param=[bookId])
             # FileLogger.warning(f"create bookreview job on {aTagUrl}")
 
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:

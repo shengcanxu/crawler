@@ -130,6 +130,7 @@ def crawlDouList(url:str):
             createJob(FilmJob, category="filmlist", name=aTagUrl)
             # FileLogger.warning(f"create filmlist job on {aTagUrl}")
 
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:
@@ -291,6 +292,7 @@ def crawlFilm(url:str):
             createJob(FilmJob, category="filmlist", name=aTagUrl)
 
         film.save()
+        session.markRequestSuccess()
         return True
 
     except Exception as ex:

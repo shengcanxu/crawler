@@ -75,15 +75,20 @@ class MultiThreadQueueWorker:
                 if succ is False:
                     errorCount += 1
                     if errorCount >= 5:
-                        time.sleep(30)
+                        time.sleep(10)
                         errorCount = 0
                     else:
-                        time.sleep(1)
+                        time.sleep(3)
 
             except Exception as ex:
                 print(ex)
                 print(f"error on thread {threadId}")
-                time.sleep(3)
+                errorCount += 1
+                if errorCount >= 5:
+                    time.sleep(10)
+                    errorCount = 0
+                else:
+                    time.sleep(3)
 
 def tryworker():
     def createJobWorker(itemList:list):
