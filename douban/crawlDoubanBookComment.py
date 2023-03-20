@@ -3,7 +3,7 @@ import time
 from mongoengine import connect, StringField, BooleanField, DateTimeField, ListField, IntField, Document, EmbeddedDocument, EmbeddedDocumentField
 from douban.crawlDoubanBook import DoubanBook
 from utils.Job import failJob, finishJob, createJob, createOrUpdateJob
-from utils.httpProxy import getHTMLSession
+from utils.httpProxy import getHTMLSession, startProxy, ProxyMode
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
 
@@ -78,19 +78,22 @@ class BookReview(Document):
     }
 
 def createCrawlJob():
-    bookIds = DoubanBook.objects.distinct("bookId")
-    count = 0
-    for bookId in bookIds:
-        book = DoubanBook.objects(bookId=bookId).first()
-        if book.commentNum is not None and book.commentNum > 0:
-            url = "https://book.douban.com/subject/%s/comments/?status=P&sort=time&percent_type=&start=0&limit=20" % bookId
-            createJob(DoubanCommentJob, category="bookcomment", name=url, param=[bookId])
-        if book.reviewNum is not None and book.reviewNum > 0:
-            url = "https://book.douban.com/subject/%s/reviews?sort=time&start=0" % bookId
-            createJob(DoubanCommentJob, category="bookreview", name=url, param=[bookId])
+    skip = 0
+    while True:
+        count = 0
+        for book in DoubanBook.objects().order_by("+bookId").skip(skip).limit(1000):
+            count += 1
+            bookId = book.bookId
+            if book.commentNum is not None and book.commentNum > 0:
+                url = "https://book.douban.com/subject/%s/comments/?status=P&sort=time&percent_type=&start=0&limit=20" % bookId
+                createJob(DoubanCommentJob, category="bookcomment", name=url, param=[bookId])
+            if book.reviewNum is not None and book.reviewNum > 0:
+                url = "https://book.douban.com/subject/%s/reviews?sort=time&start=0" % bookId
+                createJob(DoubanCommentJob, category="bookreview", name=url, param=[bookId])
 
-        count += 1
-        if count % 500 == 0: print(count)
+        if count == 0: break
+        skip += 1000
+        print(skip)
 
 def crawlBookComment(url:str, bookId:str):
     startNumPart = re.search("start=(\d+)", url)
@@ -261,9 +264,10 @@ def crawlDouobanComment():
 if __name__ == "__main__":
     connect(db="douban", alias="douban", username="canoxu", password="4401821211", authentication_source='admin')
 
-    createCrawlJob()
+    # createCrawlJob()
 
-    # crawlDouobanComment()
+    startProxy(mode=ProxyMode.PROXY_POOL)
+    crawlDouobanComment()
 
     # crawlBookComment("https://book.douban.com/subject/36122667/comments/?start=40&limit=20&status=P&sort=time", "36122667")
 

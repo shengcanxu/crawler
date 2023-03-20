@@ -78,7 +78,7 @@ class MultiThreadQueueWorker:
                         time.sleep(10)
                         errorCount = 0
                     else:
-                        time.sleep(3)
+                        time.sleep(1)
 
             except Exception as ex:
                 print(ex)
@@ -88,7 +88,7 @@ class MultiThreadQueueWorker:
                     time.sleep(10)
                     errorCount = 0
                 else:
-                    time.sleep(3)
+                    time.sleep(1)
 
 def tryworker():
     def createJobWorker(itemList:list):

@@ -4,7 +4,7 @@ import time
 from mongoengine import connect, Document, StringField, BooleanField, ListField, IntField, DateTimeField, EmbeddedDocument, EmbeddedDocumentField
 from douban.crawlDoubanFilm import DoubanFilm
 from utils.Job import createJob, deleteJob, createOrUpdateJob, finishJob, failJob
-from utils.httpProxy import getHTMLSession
+from utils.httpProxy import getHTMLSession, startProxy, ProxyMode
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
 
@@ -59,17 +59,20 @@ class DoubanFilmCommentJob(Document):
     }
 
 def createCrawlJob():
-    filmIds = DoubanFilm.objects.distinct("filmId")
-    count = 0
-    for filmId in filmIds:
-        book = DoubanFilm.objects(filmId=filmId).first()
-        # 不采集短评， 因为影视的短评太多而且没有营养
-        if book.reviewNum is not None and book.reviewNum > 0:
-            url = "https://movie.douban.com/subject/%s/reviews?sort=time&start=0" % filmId
-            createJob(DoubanFilmCommentJob, category="filmreview", name=url, param=[filmId])
+    skip = 0
+    while True:
+        count = 0
+        for film in DoubanFilm.objects().order_by("+filmId").skip(skip).limit(1000):
+            count += 1
+            filmId = film.filmId
+            # 不采集短评， 因为影视的短评太多而且没有营养
+            if film.reviewNum is not None and film.reviewNum > 0:
+                url = "https://movie.douban.com/subject/%s/reviews?sort=time&start=0" % filmId
+                createJob(DoubanFilmCommentJob, category="filmreview", name=url, param=[filmId])
 
-        count += 1
-        if count % 500 == 0: print(count)
+        if count == 0: break
+        skip += 1000
+        print(skip)
 
 def crawlFilmReview(url:str, filmId:str):
     startNumPart = re.search("start=(\d+)", url)
@@ -181,6 +184,7 @@ if __name__ == "__main__":
 
     createCrawlJob()
 
+    # startProxy(mode=ProxyMode.PROXY_POOL)
     # crawlDouobanFilmComment()
 
-    crawlFilmReview("https://movie.douban.com/subject/1292720/reviews?sort=time&start=40", "1292720")
+    # crawlFilmReview("https://movie.douban.com/subject/1292720/reviews?sort=time&start=40", "1292720")
