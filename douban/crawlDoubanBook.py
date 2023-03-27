@@ -1,5 +1,7 @@
 import time
 import re
+from queue import Queue
+
 from mongoengine import Document
 from mongoengine import connect, Document, EmbeddedDocument, ListField, StringField, IntField, FloatField, ListField, DateTimeField, BooleanField
 from requests_html import HTMLSession
@@ -363,11 +365,11 @@ def crawlBook(url:str):
         return False
 
 def crawlDoubanBook():
-    def createJobWorker(itemList:list):
+    def createJobWorker(itemQueue:Queue):
         for job in DoubanJob.objects(finished=False).order_by("+tryDate").limit(500):
             url = job.name
             category = job.category
-            itemList.append({
+            itemQueue.put({
                 "job":job,
                 "url":url,
                 "category":category

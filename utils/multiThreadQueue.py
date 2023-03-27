@@ -3,6 +3,7 @@
 
 from threading import Thread, Lock, Event
 import time
+from queue import Queue
 
 class MultiThreadQueueWorker:
     def __init__(self, threadNum = 1, minQueueSize = 500, crawlFunc = None, createJobFunc = None):
@@ -12,9 +13,8 @@ class MultiThreadQueueWorker:
         :param crawlFunc: 用于实际爬取的function, return crawl status
         :param createJobFunc: 用于往Queue中加入item的function. 返回False or None就意味着没有可以爬取的item了
         '''
-        self.itemList = []
+        self.itemQueue = Queue()
         self.threadList = []
-        self.accessLock = Lock()
         self.threadNum = threadNum
         self.minQueueSize = minQueueSize
         self.crawlFunc = crawlFunc
@@ -40,15 +40,13 @@ class MultiThreadQueueWorker:
             return
 
         while True:
-            if len(self.itemList) >= self.minQueueSize:
+            if self.itemQueue.qsize() >= self.minQueueSize:
                 time.sleep(1)
                 continue
 
-            self.accessLock.acquire()
-            preLen = len(self.itemList)
-            self.createJobFunc(self.itemList)
-            addedItemLen = len(self.itemList) - preLen
-            self.accessLock.release()
+            preLen = self.itemQueue.qsize()
+            self.createJobFunc(self.itemQueue)
+            addedItemLen = self.itemQueue.qsize() - preLen
             print(f"add {addedItemLen} items")
             if addedItemLen <= 0:
                 break
@@ -58,9 +56,7 @@ class MultiThreadQueueWorker:
         sleepSeconds = 0
         while True:
             try:
-                self.accessLock.acquire()
-                item = self.itemList.pop() if len(self.itemList) > 0 else None
-                self.accessLock.release()
+                item = self.itemQueue.get()
                 if item is None:
                     time.sleep(1)
                     sleepSeconds += 1

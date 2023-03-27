@@ -96,8 +96,7 @@ def getProxyString():
         if HTTP_PROXY_MODE == ProxyMode.SINGLE_PROXY:
             proxy, _ = proxies[-1]
         else:
-            index = random.randrange(0, len(proxies))
-            proxy = proxies[index]
+            proxy = random.choice(proxies)
 
         meta = HTTP_PROXY_MAP[proxy]
         if meta["fails"] >= PROXY_RETRYS:

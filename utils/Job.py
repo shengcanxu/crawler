@@ -45,7 +45,7 @@ def createOrUpdateJob(JobType, category: str, name: str, param: list = None):
     job = JobType.objects(category=category, name=name).first()
     if job is None:
         job = JobType(category=category, name=name, param=param)
-        job.create_date = datetime.datetime.now()
+        job.createDate = datetime.datetime.now()
         job.save()
         JOB_CREATED += 1
     else:
@@ -106,7 +106,7 @@ def createRefreshJob(JobType, category:str, name:str, param:list = None):
             return job
     else:
         job = JobType(category = category, name=name, param=param)
-        job.create_date = datetime.datetime.now()
+        job.createDate = datetime.datetime.now()
         job.finished = False
         job.lastUpdateDate = datetime.datetime.now()
         job.daySpan = 1

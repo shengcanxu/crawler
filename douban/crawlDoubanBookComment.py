@@ -1,5 +1,7 @@
 import re
 import time
+from queue import Queue
+
 from mongoengine import connect, StringField, BooleanField, DateTimeField, ListField, IntField, Document, EmbeddedDocument, EmbeddedDocumentField
 from douban.crawlDoubanBook import DoubanBook
 from utils.Job import failJob, finishJob, createJob, createOrUpdateJob
@@ -147,8 +149,8 @@ def crawlBookComment(url:str, bookId:str):
         return True
 
     except Exception as ex:
-        FileLogger.error(ex)
-        FileLogger.error(f"error on crawling {url} !")
+        # FileLogger.error(ex)
+        # FileLogger.error(f"error on crawling {url} !")
         session.markRequestFails()
         return False
 
@@ -170,8 +172,10 @@ def crawlBookReview(url:str, bookId:str):
             reviews = []
             for item in items:
                 review = BookReviewEmbed()
+                if "data-cid" not in item.attrs: continue
                 reviewId = item.attrs["data-cid"]
                 review.reviewId = reviewId
+
                 headerElem = item.find("header.main-hd", first=True)
                 if headerElem:
                     aTagElem = headerElem.find("a")
@@ -218,19 +222,19 @@ def crawlBookReview(url:str, bookId:str):
         return True
 
     except Exception as ex:
-        FileLogger.error(ex)
-        FileLogger.error(f"error on crawling {url} !")
+        # FileLogger.error(ex)
+        # FileLogger.error(f"error on crawling {url} !")
         session.markRequestFails()
         return False
 
 # 爬取豆瓣的短评和书评
 def crawlDouobanComment():
-    def createJobWorker(itemList:list):
+    def createJobWorker(itemQueue:Queue):
         for job in DoubanCommentJob.objects(finished=False).order_by("+tryDate").limit(500):
             url = job.name
             category = job.category
             bookId = job.param[0]
-            itemList.append({
+            itemQueue.put({
                 "job":job,
                 "url":url,
                 "category":category,
@@ -238,6 +242,7 @@ def crawlDouobanComment():
             })
 
     def crawlWorker(threadId:int, item):
+        ts = time.time()
         job = item["job"]
         url = item["url"]
         category = item["category"]
@@ -251,10 +256,10 @@ def crawlDouobanComment():
 
         if succ:
             finishJob(job)
-            FileLogger.warning(f"[{threadId}] success on {url} of {category}")
+            FileLogger.warning(f"[{threadId}] success on {url} of {category} with {int(time.time()-ts)} seconds")
         else:
             failJob(job)
-            FileLogger.error(f"[{threadId}] fail on {url} of {category}")
+            FileLogger.error(f"[{threadId}] fail on {url} of {category} with {int(time.time()-ts)} seconds")
         time.sleep(1)
         return succ
 
@@ -269,6 +274,6 @@ if __name__ == "__main__":
     startProxy(mode=ProxyMode.PROXY_POOL)
     crawlDouobanComment()
 
-    # crawlBookComment("https://book.douban.com/subject/36122667/comments/?start=40&limit=20&status=P&sort=time", "36122667")
+    # crawlBookComment("https://book.douban.com/subject/1026591/comments/?status=P&sort=time&percent_type=&start=0&limit=20", "1026591")
 
     # crawlBookReview("https://book.douban.com/subject/36122667/reviews?sort=time&start=20", "36122667")

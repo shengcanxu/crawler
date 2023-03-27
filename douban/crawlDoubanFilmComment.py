@@ -1,5 +1,6 @@
 import re
 import time
+from queue import Queue
 
 from mongoengine import connect, Document, StringField, BooleanField, ListField, IntField, DateTimeField, EmbeddedDocument, EmbeddedDocumentField
 from douban.crawlDoubanFilm import DoubanFilm
@@ -92,6 +93,7 @@ def crawlFilmReview(url:str, filmId:str):
             reviews = []
             for item in items:
                 review = FilmReviewEmbed()
+                if "data-cid" not in item.attrs: continue
                 reviewId = item.attrs["data-cid"]
                 review.reviewId = reviewId
                 headerElem = item.find("header.main-hd", first=True)
@@ -145,12 +147,12 @@ def crawlFilmReview(url:str, filmId:str):
         return False
 
 def crawlDouobanFilmComment():
-    def createJobWorker(itemList:list):
+    def createJobWorker(itemQueue:Queue):
         for job in DoubanFilmCommentJob.objects(finished=False).order_by("+tryDate").limit(500):
             url = job.name
             category = job.category
             filmId = job.param[0]
-            itemList.append({
+            itemQueue.put({
                 "job":job,
                 "url":url,
                 "category":category,
@@ -182,9 +184,9 @@ def crawlDouobanFilmComment():
 if __name__ == "__main__":
     connect(db="douban", alias="douban", username="canoxu", password="4401821211", authentication_source='admin')
 
-    createCrawlJob()
+    # createCrawlJob()
 
-    # startProxy(mode=ProxyMode.PROXY_POOL)
-    # crawlDouobanFilmComment()
+    startProxy(mode=ProxyMode.PROXY_POOL)
+    crawlDouobanFilmComment()
 
     # crawlFilmReview("https://movie.douban.com/subject/1292720/reviews?sort=time&start=40", "1292720")

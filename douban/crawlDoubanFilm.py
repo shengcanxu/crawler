@@ -1,5 +1,6 @@
 import re
 import time
+from queue import Queue
 
 from mongoengine import connect, Document, StringField, ListField, BooleanField, DateTimeField, IntField, FloatField
 
@@ -302,11 +303,11 @@ def crawlFilm(url:str):
         return False
 
 def crawlDoubanFilm():
-    def createJobWorker(itemList:list):
+    def createJobWorker(itemQueue:Queue):
         for job in FilmJob.objects(finished=False).order_by("+tryDate").limit(500):
             url = job.name
             category = job.category
-            itemList.append({
+            itemQueue.put({
                 "job":job,
                 "url":url,
                 "category":category
