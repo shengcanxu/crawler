@@ -1,14 +1,9 @@
 import datetime
-import gzip
-import io
 import json
-import tarfile
 import time
-
 import dateutil
 from mongoengine import connect, Document, BooleanField, StringField, DateTimeField, ListField, IntField, FloatField
 from requests_html import HTMLSession
-
 from utils.Job import createJob, createRefreshJob, failJob, finishJob
 from utils.PageBackup import PageBackup
 from utils.logger import FileLogger
@@ -207,10 +202,9 @@ def crawlNews(url:str, id:str):
     return True
 
 def refreshCrawl():
-    skip = 0
     while True:
         count = 0
-        for job in FutuJob.objects(finished=False, category="stocknews").skip(skip).limit(1000):
+        for job in FutuJob.objects(finished=False, category="stocknews").limit(100):
             time.sleep(1)
             count += 1
 
@@ -237,7 +231,6 @@ def refreshCrawl():
                 FileLogger(f"error on {url} of {category}")
 
         if count == 0: break
-        skip += 1000
 
 def createRefreshCrawlJob():
     FileLogger.info("creating refresh jobs")
