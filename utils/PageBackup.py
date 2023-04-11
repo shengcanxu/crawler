@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from zipfile import ZipFile, ZIP_DEFLATED
 
-BASE_PATH = "D:/PageBackup"
+BASE_PATH = "D:/NewsBackup"
 
 class PageBackup:
     def __init__(self, dateObj:datetime):

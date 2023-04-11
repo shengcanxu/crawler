@@ -1,6 +1,7 @@
 import re
 import time
 
+import execjs
 from mongoengine import Document, StringField, BooleanField, DateTimeField, ListField, IntField, connect
 from requests_html import HTMLSession
 
@@ -50,12 +51,22 @@ class Commic(Document):
         "db_alias": "kuaikan"
     }
 
+class CommicTopic(Document):
+    commicId = StringField(required=True)
+    url = StringField(required=True)
+    title = StringField()
+    imageList = ListField() # 漫画图片列表
+
 def crawCommic(url:str, typeName:str, areaName:str):
     session = HTMLSession()
     response = session.get(url, headers=HEADERS, cookies=COOKIES)
     if response is None or response.status_code != 200:
         return False
-    response.html.render()
+    try:
+        response.html.render()
+    except Exception as ex:
+        print(ex)
+        return False
 
     idPart = re.search("https://www.kuaikanmanhua.com/web/topic/(\d+)", url)
     if idPart is None: return False
@@ -82,7 +93,7 @@ def crawCommic(url:str, typeName:str, areaName:str):
     heatElem = topicElem.find("div.TopicHeader .right .btnListRight .heat", first=True)
     commic.heat = heatElem.text if heatElem is not None else 0
     upElem = topicElem.find("div.TopicHeader .right .btnListRight .laud .tipTxt", first=True)
-    commic.up = int(upElem.text[2:].replace(",", "")) if upElem is not None and len(upElem.text.strip()) > 0 else 0
+    commic.up = int(upElem.text.split(":")[1].replace(",", "")) if upElem is not None and len(upElem.text.strip()) > 0 else 0
 
     # commic topic list
     topicElems = topicElem.find("div.TopicItem")
@@ -141,10 +152,34 @@ def crawlCommicList(url:str, typeName:str, areaName:str):
             createJob(KuaikanJob, category="commiclist", name=newUrl, param=[typeName, areaName])
     return True
 
+def crawlCommicTopic(url:str, commicId:str, title:str):
+    session = HTMLSession()
+    response = session.get(url, headers=HEADERS, cookies=COOKIES)
+    if response is None or response.status_code != 200:
+        return False
+
+    topic = CommicTopic.objects(commicId = commicId).first()
+    if topic is None:
+        topic = CommicTopic(commicId = commicId)
+    topic.url = url
+    topic.title = title
+
+    imageUrlList = []
+    imageElems = response.html.find("div.imgList div.img-box img.img")
+    for imageElem in imageElems:
+        imageUrl = imageElem.attrs["src"]
+        imageUrlList.append(imageUrl)
+    topic.imageList = imageUrlList
+    topic.save()
+
+    # download and save the html page
+
+    return True
+
 def refreshCrawl():
     while True:
         count = 0
-        for job in KuaikanJob.objects(finished=False).limit(100):
+        for job in KuaikanJob.objects(finished=False).order_by("tryDate").limit(100):
             time.sleep(1)
             count += 1
 
@@ -159,6 +194,10 @@ def refreshCrawl():
                     typeName = job.param[0]
                     areaName = job.param[1]
                     succ = crawCommic(url, typeName, areaName)
+                elif category == "topic":
+                    commicId = job.param[0]
+                    title = job.param[1]
+                    succ = crawlCommicTopic(url, commicId, title)
 
                 if succ:
                     finishJob(job)
@@ -191,7 +230,7 @@ if __name__ == "__main__":
     connect(db="stock", alias="stock", username="canoxu", password="4401821211", authentication_source='admin')
 
     # createCrawlListJobs()
-    refreshCrawl()
+    # refreshCrawl()
 
     # crawlCommicList("https://www.kuaikanmanhua.com/tag/20?region=2&pays=0&state=0&sort=1&page=1", "恋爱", "国漫")
-    # crawCommic("https://www.kuaikanmanhua.com/web/topic/11066/", "恋爱", "国漫")
+    crawCommic("https://www.kuaikanmanhua.com/web/topic/726", "恋爱", "国漫")

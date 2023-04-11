@@ -1,8 +1,15 @@
 import datetime
+import hashlib
 import json
+import math
+import random
 import time
+from queue import Queue
+
 import dateutil
+import requests
 from mongoengine import connect, Document, BooleanField, StringField, DateTimeField, ListField, IntField, FloatField
+from requests import Response
 from requests_html import HTMLSession
 from utils.Job import createJob, createRefreshJob, failJob, finishJob
 from utils.PageBackup import PageBackup
@@ -17,6 +24,7 @@ HEADERS = {
     "futu-x-csrf-token": "", # 需要从股票首页的META中获得
 }
 COOKIES = {}
+session = HTMLSession()
 
 # https://tushare.pro/document/2?doc_id=25, 更新采用cninfo的数据
 class StockInfo(Document):
@@ -98,92 +106,153 @@ def parseNewsList(newsList:list):
 
 # 爬取新闻列表
 def crawlNewsList(url:str):
-    global COOKIES, HEADERS
-    session = HTMLSession()
-    response = session.get(url, headers=HEADERS, cookies=COOKIES)
-    if response is None or response.status_code != 200:
-        return False
-    COOKIES = session.cookies
+    global COOKIES, HEADERS, session
 
-    # get futu-x-csrf-token
-    metaElem = response.html.xpath("//meta[@name='csrf-token']", first=True)
-    if metaElem is not None:
-        HEADERS["futu-x-csrf-token"] = metaElem.attrs["content"]
-        HEADERS["Referer"] = url
-
-    # get seq_mark
-    seqMark = response.html.search('"seq_mark":{},')[0]
-    seqMark = seqMark.replace('"', "").strip()
-
-    # news list
-    strResult = response.html.search('__INITIAL_STATE__{}window._params')
-    if strResult is None: return False
-    data = strResult[0].strip()
-    if data[-1] == ',':
-        data = data[:-1]
-    if data[0] == '=':
-        data = data[1:]
-    jsonData = json.loads(data)
-    prefetch = jsonData.get("prefetch",{})
-    newsList = prefetch.get("newsList", {}).get("list", [])
-    stockId = prefetch.get("stockInfo", {}).get("stock_id", 0)
-    marketType = prefetch.get("stockInfo", {}).get("market_type", 0)
-    newsType = prefetch.get("newsType", 0)
-    newsSubType = prefetch.get("newsSubType", 0)
-    allNew = parseNewsList(newsList)
-
-    hasNext = True
-    while hasNext and allNew:
-        url = "https://www.futunn.com/quote-api/get-news-list?stock_id=%s&seq_mark=%s&market_type=%s&type=%s&subType=%s" % \
-              (str(stockId), seqMark, str(marketType), str(newsType), str(newsSubType))
-        print(url)
+    try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
-        jsonData = response.json().get("data", {})
-        hasNext = jsonData.get("has_more", False)
-        seqMark = jsonData.get("seq_mark", False)
-        newsList = jsonData.get("list", [])
+        if response is None or response.status_code != 200:
+            return False
+        COOKIES = session.cookies
+
+        # get futu-x-csrf-token
+        metaElem = response.html.xpath("//meta[@name='csrf-token']", first=True)
+        if metaElem is not None:
+            HEADERS["futu-x-csrf-token"] = metaElem.attrs["content"]
+            HEADERS["Referer"] = url
+        else:
+            return False
+
+        # news list
+        strResult = response.html.search('__INITIAL_STATE__{}window._params')
+        if strResult is None: return False
+        data = strResult[0].strip()
+        if data[-1] == ',':
+            data = data[:-1]
+        if data[0] == '=':
+            data = data[1:]
+        jsonData = json.loads(data)
+        prefetch = jsonData.get("prefetch",{})
+        newsList = prefetch.get("newsList", {}).get("list", [])
+        stockId = prefetch.get("stockInfo", {}).get("stock_id", 0)
+        marketType = prefetch.get("stockInfo", {}).get("market_type", 0)
+        newsType = prefetch.get("newsType", 0)
+        newsSubType = prefetch.get("newsSubType", 0)
         allNew = parseNewsList(newsList)
 
-        time.sleep(1)
+        # get seq_mark
+        seqMarkMatch = response.html.search('"seq_mark":{},')
+        seqMark = seqMarkMatch[0].replace('"', "").strip() if seqMarkMatch is not None else None
+
+        hasNext = True
+        while hasNext and allNew and seqMark:
+            url = "https://www.futunn.com/quote-api/get-news-list?stock_id=%s&seq_mark=%s&market_type=%s&type=%s&subType=%s" % \
+                  (str(stockId), seqMark, str(marketType), str(newsType), str(newsSubType))
+            print(url)
+            response = session.get(url, headers=HEADERS, cookies=COOKIES)
+            jsonData = response.json().get("data", {})
+            hasNext = jsonData.get("has_more", False)
+            seqMark = jsonData.get("seq_mark", False)
+            newsList = jsonData.get("list", [])
+            allNew = parseNewsList(newsList)
+
+            time.sleep(0.5)
+    except Exception as ex:
+        FileLogger.error(ex)
+        return False
+
     return True
 
 # 爬取新闻内容
-def crawlNews(url:str, id:str):
-    session = HTMLSession()
-    response = session.get(url, headers=HEADERS, cookies=COOKIES)
-    if response is None or response.status_code != 200:
+def crawlNews(url:str, newsId:str, job):
+    global session
+    try:
+        response = session.get(url, headers=HEADERS, cookies=COOKIES, timeout=10)
+        if response is None or response.status_code != 200:
+            return False
+
+        news = FutuNews.objects(newsId=newsId).first()
+        if news is None:
+            news = FutuNews(newsId=newsId)
+        news.url = url
+
+        if response.url.find("futunn.com") >= 0:
+            crawlFutuNews(newsId, news, response, session)
+        elif response.url.find("qq.com") >= 0:
+            FileLogger.info("skip QQ crawler")
+            job.param.append("QQ")
+            # crawlQQNews(newsId, news, response, session)
+            return False
+        else:
+            FileLogger.error("this url is not catched in code, add it")
+            return False
+
+        news.save()
+        return True
+    except Exception as ex:
+        FileLogger.error(ex)
         return False
 
-    # save to backup file
-    timeElem = response.html.find("div.info-bar .publicTime", first=True)
+# save to backup file in domain:futunn.com
+def crawlQQNews(newsId:str, news:FutuNews, response:Response, session:HTMLSession):
+    response.html.render()
+
+    timeElem = response.html.find("#news_time", first=True)
     dateStr = timeElem.text if timeElem is not None else "1990/01/01"
     dateObj = dateutil.parser.parse(dateStr)
     backup = PageBackup(dateObj)
-    backup.writeHtml(id+".html", response.text)
+    backup.writeHtml(newsId + ".html", response.text)
 
-    imageElems = response.html.find("#content img")
+    imageElems = response.html.find("#news-text .news-text img")
     for image in imageElems:
+        if "src" not in image.attrs: continue
         imageUrl = image.attrs["src"]
         imageRes = session.get(imageUrl, headers=HEADERS, cookies=COOKIES)
         if imageRes is None or imageRes.status_code != 200:
             continue
-
         backup.writeImage(imageRes.url, imageRes.content)
+        time.sleep(0.1)
 
     # parse content
-    news = FutuNews.objects(newsId = id).first()
-    if news is None:
-        news = FutuNews(newsId = id)
-    news.url = url
     news.createDate = dateObj.strftime("%Y-%m-%d")
+    titleElem = response.html.find("#news_title span", first=True)
+    if titleElem is not None:
+        news.title = titleElem.text
+    authorElem = response.html.find("#news_source", first=True)
+    if authorElem is not None:
+        news.author = authorElem.text
+        news.authorUrl = authorElem.attrs["href"] if "href" in authorElem.attrs else None
+    contentElem = response.html.find("#news-text .news-text", first=True)
+    if contentElem is not None:
+        news.content = contentElem.text
+    news.relatedStocks = []
 
+# save to backup file in domain:futunn.com
+def crawlFutuNews(newsId:str, news:FutuNews, response:Response, session:HTMLSession):
+    timeElem = response.html.find("div.info-bar .publicTime", first=True)
+    dateStr = timeElem.text if timeElem is not None else "1990/01/01"
+    dateObj = dateutil.parser.parse(dateStr)
+    backup = PageBackup(dateObj)
+    backup.writeHtml(newsId + ".html", response.text)
+
+    imageElems = response.html.find("#content img")
+    for image in imageElems:
+        if "src" not in image.attrs: continue
+        imageUrl = image.attrs["src"]
+        imageRes = session.get(imageUrl, headers=HEADERS, cookies=COOKIES)
+        if imageRes is None or imageRes.status_code != 200:
+            continue
+        backup.writeImage(imageRes.url, imageRes.content)
+        time.sleep(0.1)
+
+    # parse content
+    news.createDate = dateObj.strftime("%Y-%m-%d")
     titleElem = response.html.find("#newsDetail h1.title", first=True)
     if titleElem is not None:
         news.title = titleElem.text
     authorElem = response.html.find("div.info-bar a", first=True)
     if authorElem is not None:
         news.author = authorElem.text
-        news.authorUrl = authorElem.attrs["href"]
+        news.authorUrl = authorElem.attrs["href"] if "href" in authorElem.attrs else None
     contentElem = response.html.find("#content", first=True)
     if contentElem is not None:
         news.content = contentElem.text
@@ -198,14 +267,10 @@ def crawlNews(url:str, id:str):
             })
     news.relatedStocks = relatedStocks
 
-    news.save()
-    return True
-
 def refreshCrawl():
     while True:
         count = 0
-        for job in FutuJob.objects(finished=False, category="stocknews").limit(100):
-            time.sleep(1)
+        for job in FutuJob.objects(finished=False).order_by("tryDate").limit(100):
             count += 1
 
             url = job.name
@@ -216,8 +281,8 @@ def refreshCrawl():
                 if category == "stocknews":
                     succ = crawlNewsList(url)
                 elif category == "news":
-                    id = job.param[0]
-                    succ = crawlNews(url, id)
+                    id = str(job.param[0])
+                    succ = crawlNews(url, id, job)
 
                 if succ:
                     finishJob(job)
@@ -230,6 +295,7 @@ def refreshCrawl():
                 FileLogger(ex)
                 FileLogger(f"error on {url} of {category}")
 
+            time.sleep(0.1)
         if count == 0: break
 
 def createRefreshCrawlJob():
@@ -240,6 +306,7 @@ def createRefreshCrawlJob():
         url = "https://www.futunn.com/stock/%s" % code
         createRefreshJob(FutuJob, category="stocknews", name=url)
 
+
 # 爬取富图的新闻
 if __name__ == "__main__":
     connect(db="futu", alias="futu", username="canoxu", password="4401821211", authentication_source='admin')
@@ -249,4 +316,6 @@ if __name__ == "__main__":
     refreshCrawl()
 
     # succ = crawlNewsList("https://www.futunn.com/stock/600519-SH")
-    # crawlNews("https://news.futunn.com/post/25320339?_ftsdk=1679834301976540&futusource=news_web_stockpagenews&lang=zh-cn&ns_stock_id=49649823542279&report_id=32671280&report_type=stock&src=43&level=2&data_ticket=1679834301976540", "16945444")
+    # crawlNews("https://news.futunn.com/post/21827639?src=43&ns_stock_id=33333243184257&report_type=stock&report_id=29312004", "32198898")
+
+
