@@ -109,7 +109,7 @@ def crawlNewsList(url:str):
     global COOKIES, HEADERS, session
 
     try:
-        response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        response = session.get(url, headers=HEADERS, cookies=COOKIES, timeout=10)
         if response is None or response.status_code != 200:
             return False
         COOKIES = session.cookies
@@ -148,7 +148,7 @@ def crawlNewsList(url:str):
             url = "https://www.futunn.com/quote-api/get-news-list?stock_id=%s&seq_mark=%s&market_type=%s&type=%s&subType=%s" % \
                   (str(stockId), seqMark, str(marketType), str(newsType), str(newsSubType))
             print(url)
-            response = session.get(url, headers=HEADERS, cookies=COOKIES)
+            response = session.get(url, headers=HEADERS, cookies=COOKIES, timeout=10)
             jsonData = response.json().get("data", {})
             hasNext = jsonData.get("has_more", False)
             seqMark = jsonData.get("seq_mark", False)
@@ -206,7 +206,7 @@ def crawlQQNews(newsId:str, news:FutuNews, response:Response, session:HTMLSessio
     for image in imageElems:
         if "src" not in image.attrs: continue
         imageUrl = image.attrs["src"]
-        imageRes = session.get(imageUrl, headers=HEADERS, cookies=COOKIES)
+        imageRes = session.get(imageUrl, headers=HEADERS, cookies=COOKIES, timeout=10)
         if imageRes is None or imageRes.status_code != 200:
             continue
         backup.writeImage(imageRes.url, imageRes.content)
@@ -238,7 +238,7 @@ def crawlFutuNews(newsId:str, news:FutuNews, response:Response, session:HTMLSess
     for image in imageElems:
         if "src" not in image.attrs: continue
         imageUrl = image.attrs["src"]
-        imageRes = session.get(imageUrl, headers=HEADERS, cookies=COOKIES)
+        imageRes = session.get(imageUrl, headers=HEADERS, cookies=COOKIES, timeout=10)
         if imageRes is None or imageRes.status_code != 200:
             continue
         backup.writeImage(imageRes.url, imageRes.content)
