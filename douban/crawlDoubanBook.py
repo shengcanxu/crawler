@@ -100,6 +100,7 @@ def crawlCategoryList():
             createJob(DoubanJob, category="booklist", name=tagUrl)
 
         session.markRequestSuccess()
+        return True
 
     except Exception as ex:
         FileLogger.error(ex)

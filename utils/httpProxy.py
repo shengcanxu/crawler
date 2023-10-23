@@ -16,8 +16,9 @@ HTTP_PROXY_MODE = ProxyMode.NO_PROXY
 PROXY_RETRYS = 10
 PROXY_LAST_SECONDS = 120
 
+# 使用小象代理来作为代理池
 def fetchProxy():
-    url = "https://api.xiaoxiangdaili.com/ip/get?appKey=953181634197606400&appSecret=ZWFW5ieW&cnt=&wt=text"
+    url = "https://api.xiaoxiangdaili.com/ip/get?appKey=1033807947605889024&appSecret=WXcSbuGp&cnt=&wt=text"
     session = HTMLSession()
     response = session.get(url)
     if response.status_code == 200:
