@@ -1,10 +1,17 @@
+import os
+import sys
+from enum import Enum
+
+import pinyin
+
+sys.path.append("D:\\project\\crawler\\")
 import hashlib
 import json
 import time
 import traceback
 import urllib
 from queue import Queue
-from mongoengine import connect, Document, StringField, DictField, BooleanField, DateTimeField, IntField, ListField
+from mongoengine import connect, Document, StringField, DictField, BooleanField, DateTimeField, IntField, ListField, LongField
 from utils.Job import createJob, finishJob, failJob
 from utils.httpProxy import getHTMLSession, startProxy, ProxyMode
 from utils.logger import FileLogger
@@ -62,6 +69,24 @@ class KugouSongList(Document):
         "db_alias": "kugou"
     }
 
+class KugouSong(Document):
+    identify = StringField(required=True)
+    name = StringField(required=True)
+    url = StringField(required=True)
+    info = DictField(required=True)
+    update_timestamp = LongField(required=True)
+    album = StringField(required=False)
+    crawled = BooleanField(required=True, default=False)
+    type = StringField(required=True)
+    avg_play_count = LongField(default=0)
+    max_play_count = LongField(default=0)
+    belongto_album_count = IntField(default=0)
+    meta = {
+        "strict": True,
+        "collection": "songs",
+        "db_alias": "kugou"
+    }
+
 # 使用网页中一样的代码来生成search url
 def _gen_keyword_search_url(keyword):
     template = "https://complexsearch.kugou.com/v1/search/special?callback=callback123&keyword=%s&page=1&pagesize=30&userid=0&clientver=20000&platform=WebFilter&iscorrection=1&privilege_filter=0&filter=10&appid=1014&srcappid=2919&clienttime=%s&mid=%s&uuid=%s&dfid=-&signature=%s"
@@ -115,7 +140,6 @@ def crawl_keyword(url:str, keyword:str):
 
     except Exception as ex:
         FileLogger.error(ex)
-        # traceback.print_exc()
         FileLogger.error(f"error on crawling {url} !")
         session.markRequestFails()
         return False
@@ -146,6 +170,18 @@ def crawl_songlist(url:str):
             songlist.crawled = True
             songlist.save()
 
+        # create crawl song job
+        for idx, song in enumerate(songs):
+            songurl = song["url"]
+            name = song["title"]
+
+            left = songurl.rfind("/")
+            right = songurl.rfind(".html")
+            identify = songurl[left+1:right] if left >= 0 and right >= 0 else None
+            if identify is not None:
+                param = [identify, name, url, idx]
+                createJob(KugouJob, category="cz_song", name=songurl, param=param)
+
         # split song name to get the new keywords to search
         for song in songs:
             title = song["title"]
@@ -168,13 +204,140 @@ def crawl_songlist(url:str):
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling {url} !")
-        # traceback.print_exc()
+        session.markRequestFails()
+        return False
+
+class SongType(Enum):
+    UnDownload = "undowload"
+    LowPlayCount = "lowplaycount"
+    ReadyToDownload = "readytodownload"
+    VIPSong = "vipsong"
+    Unknown = "unknown"
+
+# 爬取歌曲信息
+def crawl_song(url:str, identify:str, name:str, songlist_url:str, idx:int):
+    song = KugouSong.objects(identify=identify).first()
+    if song is None:
+        song = KugouSong(identify=identify, name=name, url=url, crawled=False)
+        jsonobj = _crawl_song_url(url, identify)
+        if jsonobj is None or "data" not in jsonobj: return False
+
+        song.info = jsonobj["data"]
+        song.update_timestamp = int(time.time() * 1000)
+        song.type = SongType.UnDownload.value
+        song.album = songlist_url
+        song.avg_play_count = 0
+        song.max_play_count = 0
+        song.belongto_album_count = 0
+
+    # get the play count from songlist and add to song
+    songlist = KugouSongList.objects(url=songlist_url).first()
+    if songlist is not None:
+        info = songlist.info
+        total_play = int(info["total_play_count"])
+        song_count = int(info["song_count"])
+        song_play = int(total_play / song_count)
+
+        pre_count = song.belongto_album_count
+        song.belongto_album_count = pre_count + 1
+        song.avg_play_count = int( (song.avg_play_count * pre_count + song_play) / (pre_count + 1) )
+        if song_play > song.max_play_count:
+            song.max_play_count = song_play
+
+    song_type = _check_song_type(song)
+    song.type = song_type.value
+    song.save()
+
+    # create download song job
+    if song_type == SongType.ReadyToDownload:
+        param = [song.name]
+        createJob(KugouJob, category="ah_downloadsong", name=song.url, param=param)
+
+    return True
+
+def _check_song_type(song:KugouSong):
+    privilege = song.info["privilege"]
+    if song.avg_play_count < 100 * 10000 and song.max_play_count < 500 * 10000:
+        return SongType.LowPlayCount
+    elif privilege == 8:  # free songs
+        return SongType.ReadyToDownload
+    elif privilege == 10:  # vip songs
+        return SongType.VIPSong
+    else:
+        return SongType.Unknown
+
+def _crawl_song_url(url:str, identify:str):
+    session = getHTMLSession()
+    try:
+        template = "https://wwwapi.kugou.com/yy/index.php?r=play/getdata&callback=jQuery19108931500086689674_%s&dfid=0jI33k2UZ5621ZJPSp4GAWxX&appid=1014&mid=a9ec92f8da70b1cab1692a938d75d5c6&platid=4&encode_album_audio_id=%s&_=%s"
+        ts = str(int(time.time() * 1000))
+        songurl = template % (ts, identify, ts)
+        response = session.get(songurl, headers=HEADERS, cookies=COOKIES)
+        if response is None: return False
+
+        jsontext = response.text.strip()
+        if not jsontext.startswith("jQuery19108931500086689674"): return False
+        right = jsontext.rfind(')')
+        jsontext = jsontext[41:right]
+        jsonobj = json.loads(jsontext)
+
+        session.markRequestSuccess()
+        return jsonobj
+
+    except Exception as ex:
+        FileLogger.error(ex)
+        FileLogger.error(f"error on crawling {url} !")
+        session.markRequestFails()
+        return None
+
+# download song
+def download_song(url:str, song_name:str):
+    def _get_file_path(song_name):
+        basepath = "d:\\test\\"
+        pinyin_char = pinyin.get(song_name.strip(), format="strip", delimiter="")
+        first_char = pinyin_char[0]
+        path = os.path.join(basepath, first_char)
+        if not os.path.exists(path):
+            os.mkdir(path)
+
+        singers = song_name.split("-")[0]
+        first_singer = singers.split("、")[0]
+        first_singer = first_singer.replace(" +", "_")
+        path = os.path.join(path, first_singer)
+        if not os.path.exists(path):
+            os.mkdir(path)
+        return path
+
+    session = getHTMLSession()
+    try:
+        response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        content = response.content
+
+        # find the right filepath
+        extension = "mp3"
+        pos = url.rfind(".")
+        if pos >= 0:
+            extension = url[url.rfind(".")+1:]
+
+        filepath = _get_file_path(song_name)
+        filename = "%s.%s" % (song_name, extension)
+        filepath = os.path.join(filepath, filename)
+        with open(filepath, "wb") as f:
+            f.write(content)
+
+        session.markRequestSuccess()
+        return True
+
+    except Exception as ex:
+        FileLogger.error(ex)
+        FileLogger.error(f"error on crawling {url} !")
+        traceback.print_exc()
         session.markRequestFails()
         return False
 
 def crawl_kugou_job():
     def create_job_worker(item_queue:Queue):
-        for job in KugouJob.objects(finished=False).order_by("+category +tryDate").limit(500):
+        for job in KugouJob.objects(finished=False).order_by("+category").limit(500):
             url = job.name
             category = job.category
             param = job.param
@@ -193,10 +356,15 @@ def crawl_kugou_job():
         succ = False
         if category == "az_searchkeyword":
             keyword = item["param"][0]
-            # print("searching " + keyword)
             succ = crawl_keyword(url, keyword)
-        if category == "bz_songlist":
+        elif category == "bz_songlist":
             succ = crawl_songlist(url)
+        elif category == "cz_song":
+            param = item["param"]
+            succ = crawl_song(url, param[0], param[1], param[2], param[3])
+        elif category == "ah_downloadsong":
+            song_name = item["param"][0]
+            succ = download_song(url, song_name)
 
         if succ:
             finishJob(job)
@@ -214,6 +382,7 @@ def crawl_kugou_job():
 if __name__ == "__main__":
     connect(db="kugou", alias="kugou", username="canoxu", password="4401821211", authentication_source='admin')
 
-    startProxy(mode=ProxyMode.PROXY_POOL)
-    crawl_kugou_job()
+    # startProxy(mode=ProxyMode.PROXY_POOL)
+    # crawl_kugou_job()
 
+    download_song("https://webfs.hw.kugou.com/202310241620/3ac9ef45e72247a1ab2f1e1b6752855c/v2/ff0a168777ea56e0737c025774c025b1/G195/M03/1B/09/Y4cBAF5zR7KATFN3ABctjo-3aW0724.mp3", "周杰伦、Lara梁心颐 - 珊瑚海")
