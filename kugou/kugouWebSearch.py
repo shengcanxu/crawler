@@ -146,6 +146,11 @@ def crawl_keyword(url:str, keyword:str):
 
 # 爬取歌单信息
 def crawl_songlist(url:str):
+    def _is_chinese(text):
+        chinese_regex = re.compile('^[\u4e00-\u9fff]+')
+        japanese_regex = re.compile('[\u3040-\u309F]+')
+        return chinese_regex.search(text) is not None and japanese_regex.search(text) is None
+
     session = getHTMLSession()
     try:
         response = session.get(url, headers=HEADERS, cookies=COOKIES)
@@ -193,6 +198,8 @@ def crawl_songlist(url:str):
             for string in strings:
                 keyword = re.sub(r"[\(（].*[\)）]", "", string)
                 keyword = keyword.strip()
+                if len(keyword) == 0 or len(keyword) > 10 or not _is_chinese(keyword): continue  # only Chinese keyword accepted
+
                 kugou_keyword = KugouKeyword.objects(keyword=keyword).first()
                 if kugou_keyword is None:
                     keyword_url = "https://www.kugou.com/yy/html/search.html#searchType=special&searchKeyWord=%s" % keyword
@@ -359,12 +366,12 @@ def crawl_kugou_job():
             succ = crawl_keyword(url, keyword)
         elif category == "bz_songlist":
             succ = crawl_songlist(url)
-        elif category == "cz_song":
-            param = item["param"]
-            succ = crawl_song(url, param[0], param[1], param[2], param[3])
-        elif category == "ah_downloadsong":
-            song_name = item["param"][0]
-            succ = download_song(url, song_name)
+        # elif category == "cz_song":
+        #     param = item["param"]
+        #     succ = crawl_song(url, param[0], param[1], param[2], param[3])
+        # elif category == "ah_downloadsong":
+        #     song_name = item["param"][0]
+            # succ = download_song(url, song_name)
 
         if succ:
             finishJob(job)
@@ -375,14 +382,14 @@ def crawl_kugou_job():
         time.sleep(1)
         return succ
 
-    worker = MultiThreadQueueWorker(threadNum=10, minQueueSize=500, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
+    worker = MultiThreadQueueWorker(threadNum=20, minQueueSize=500, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()
 
 
 if __name__ == "__main__":
     connect(db="kugou", alias="kugou", username="canoxu", password="4401821211", authentication_source='admin')
 
-    # startProxy(mode=ProxyMode.PROXY_POOL)
-    # crawl_kugou_job()
+    startProxy(mode=ProxyMode.PROXY_POOL)
+    crawl_kugou_job()
 
-    download_song("https://webfs.hw.kugou.com/202310241620/3ac9ef45e72247a1ab2f1e1b6752855c/v2/ff0a168777ea56e0737c025774c025b1/G195/M03/1B/09/Y4cBAF5zR7KATFN3ABctjo-3aW0724.mp3", "周杰伦、Lara梁心颐 - 珊瑚海")
+    # download_song("https://webfs.hw.kugou.com/202310241620/3ac9ef45e72247a1ab2f1e1b6752855c/v2/ff0a168777ea56e0737c025774c025b1/G195/M03/1B/09/Y4cBAF5zR7KATFN3ABctjo-3aW0724.mp3", "周杰伦、Lara梁心颐 - 珊瑚海")
