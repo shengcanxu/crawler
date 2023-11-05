@@ -1,8 +1,10 @@
 import os
 import sys
 from enum import Enum
-
+import execjs
 import pinyin
+
+from kugou.mid_list import MIDS
 
 sys.path.append("D:\\project\\crawler\\")
 import hashlib
@@ -25,13 +27,15 @@ HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-TW;q=0.6",
     "Referer": "https://www.kugou.com/"
 }
+
 COOKIES = {
     "kg_mid": "a9ec92f8da70b1cab1692a938d75d5c6",
-    "kg_dfid": "0jI33k2UZ5621ZJPSp4GAWxX",
-    "Hm_lvt_aedee6983d4cfc62f509129360d6bb3d": "1697809639",
-    "KuGooRandom": "66961697809639528",
+    "kg_mid_temp": "28cea9ae48aa5e15caa38f15cf6f7732",
+    "kg_dfid": "3Mmzyu2UZ53i3TOXFX132990",
     "kg_dfid_collect": "d41d8cd98f00b204e9800998ecf8427e",
-    "Hm_lpvt_aedee6983d4cfc62f509129360d6bb3d": "1698058164"
+    "Hm_lvt_aedee6983d4cfc62f509129360d6bb3d": "1699000126",
+    "KuGooRandom": "66641699012271305",
+    "Hm_lpvt_aedee6983d4cfc62f509129360d6bb3d": "1699008049"
 }
 
 class KugouJob(Document):
@@ -73,9 +77,9 @@ class KugouSong(Document):
     identify = StringField(required=True)
     name = StringField(required=True)
     url = StringField(required=True)
-    info = DictField(required=True)
-    update_timestamp = LongField(required=True)
-    album = StringField(required=False)
+    info = DictField(required=False)
+    update_timestamp = LongField(required=False)
+    albums = ListField(required=True)
     crawled = BooleanField(required=True, default=False)
     type = StringField(required=True)
     avg_play_count = LongField(default=0)
@@ -184,8 +188,10 @@ def crawl_songlist(url:str):
             right = songurl.rfind(".html")
             identify = songurl[left+1:right] if left >= 0 and right >= 0 else None
             if identify is not None:
-                param = [identify, name, url, idx]
-                createJob(KugouJob, category="cz_song", name=songurl, param=param)
+                createJob(KugouJob, category="cz_song", name=songurl, param=[identify, name, url, idx])
+
+                # create song object or add to song object
+                _create_or_addto_song(identify, name, songurl, songlist)
 
         # split song name to get the new keywords to search
         for song in songs:
@@ -214,6 +220,34 @@ def crawl_songlist(url:str):
         session.markRequestFails()
         return False
 
+def _create_or_addto_song(identify:str, name:str, url:str, songlist:KugouSongList):
+    songlist_url = songlist.url
+    song = KugouSong.objects(identify=identify).first()
+    if song is None:
+        song = KugouSong(identify=identify, name=name, url=url, crawled=False)
+        song.type = SongType.UnDownload.value
+        song.albums.append(songlist_url)
+        song.avg_play_count = 0
+        song.max_play_count = 0
+        song.belongto_album_count = 0
+    else:  #add to song
+        song.albums.append(songlist_url)
+
+    # get the play count from songlist and add to song
+    info = songlist.info
+    total_play = int(info["total_play_count"])
+    song_count = int(info["song_count"])
+    song_play = int(total_play / song_count)
+
+    pre_count = song.belongto_album_count
+    song.belongto_album_count = pre_count + 1
+    song.avg_play_count = int( (song.avg_play_count * pre_count + song_play) / (pre_count + 1) )
+    if song_play > song.max_play_count:
+        song.max_play_count = song_play
+
+    song.save()
+
+
 class SongType(Enum):
     UnDownload = "undowload"
     LowPlayCount = "lowplaycount"
@@ -222,44 +256,31 @@ class SongType(Enum):
     Unknown = "unknown"
 
 # 爬取歌曲信息
-def crawl_song(url:str, identify:str, name:str, songlist_url:str, idx:int):
+def crawl_song(url:str, identify:str, name:str, thread_id:int):
     song = KugouSong.objects(identify=identify).first()
     if song is None:
-        song = KugouSong(identify=identify, name=name, url=url, crawled=False)
-        jsonobj = _crawl_song_url(url, identify)
-        if jsonobj is None or "data" not in jsonobj: return False
+        return True
 
-        song.info = jsonobj["data"]
-        song.update_timestamp = int(time.time() * 1000)
-        song.type = SongType.UnDownload.value
-        song.album = songlist_url
-        song.avg_play_count = 0
-        song.max_play_count = 0
-        song.belongto_album_count = 0
+    jsonobj = _crawl_song_url(url, identify, thread_id)
+    if jsonobj is None or "data" not in jsonobj: return False
+    info = jsonobj["data"]
+    # check if get the right response
+    if 'play_url' not in info:
+        FileLogger.error("no play_url in the response, maybe blocked")
+        return False
 
-    # get the play count from songlist and add to song
-    songlist = KugouSongList.objects(url=songlist_url).first()
-    if songlist is not None:
-        info = songlist.info
-        total_play = int(info["total_play_count"])
-        song_count = int(info["song_count"])
-        song_play = int(total_play / song_count)
-
-        pre_count = song.belongto_album_count
-        song.belongto_album_count = pre_count + 1
-        song.avg_play_count = int( (song.avg_play_count * pre_count + song_play) / (pre_count + 1) )
-        if song_play > song.max_play_count:
-            song.max_play_count = song_play
+    song.info = info
+    song.update_timestamp = int(time.time() * 1000)
 
     song_type = _check_song_type(song)
     song.type = song_type.value
+    song.crawled = True
     song.save()
 
     # create download song job
     if song_type == SongType.ReadyToDownload:
         param = [song.name]
         createJob(KugouJob, category="ah_downloadsong", name=song.url, param=param)
-
     return True
 
 def _check_song_type(song:KugouSong):
@@ -273,7 +294,7 @@ def _check_song_type(song:KugouSong):
     else:
         return SongType.Unknown
 
-def _crawl_song_url(url:str, identify:str):
+def _crawl_song_url_old(url:str, identify:str):
     session = getHTMLSession()
     try:
         template = "https://wwwapi.kugou.com/yy/index.php?r=play/getdata&callback=jQuery19108931500086689674_%s&dfid=0jI33k2UZ5621ZJPSp4GAWxX&appid=1014&mid=a9ec92f8da70b1cab1692a938d75d5c6&platid=4&encode_album_audio_id=%s&_=%s"
@@ -286,6 +307,35 @@ def _crawl_song_url(url:str, identify:str):
         if not jsontext.startswith("jQuery19108931500086689674"): return False
         right = jsontext.rfind(')')
         jsontext = jsontext[41:right]
+        jsonobj = json.loads(jsontext)
+
+        session.markRequestSuccess()
+        return jsonobj
+
+    except Exception as ex:
+        FileLogger.error(ex)
+        FileLogger.error(f"error on crawling {url} !")
+        session.markRequestFails()
+        return None
+
+def _crawl_song_url(url:str, identify:str, thread_id:int):
+    session = getHTMLSession()
+    try:
+        template = "https://wwwapi.kugou.com/play/songinfo?srcappid=2919&clientver=20000&clienttime=%s&mid=%s&uuid=%s&dfid=%s&appid=1014&platid=4&encode_album_audio_id=%s&token=&userid=0&signature=%s"
+
+        ts = str(int(time.time() * 1000))
+        mid = MIDS[thread_id]
+        uuid = mid
+        dfid = COOKIES["kg_dfid"]
+
+        sign_template = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwtappid=1014clienttime=%sclientver=20000dfid=%sencode_album_audio_id=%smid=%splatid=4srcappid=2919token=userid=0uuid=%sNVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
+        sign_str = sign_template % (ts, dfid, identify, mid, uuid)
+        signature = hashlib.md5(sign_str.encode()).hexdigest()
+
+        songurl = template % (ts, mid, uuid, dfid, identify, signature)
+        response = session.get(songurl, headers=HEADERS)  # don't use cookies here
+        if response is None: return False
+        jsontext = response.text.strip()
         jsonobj = json.loads(jsontext)
 
         session.markRequestSuccess()
@@ -344,7 +394,7 @@ def download_song(url:str, song_name:str):
 
 def crawl_kugou_job():
     def create_job_worker(item_queue:Queue):
-        for job in KugouJob.objects(finished=False).order_by("+category").limit(500):
+        for job in KugouJob.objects(category="cz_song", finished=False).order_by("+category").limit(500):
             url = job.name
             category = job.category
             param = job.param
@@ -366,9 +416,9 @@ def crawl_kugou_job():
             succ = crawl_keyword(url, keyword)
         elif category == "bz_songlist":
             succ = crawl_songlist(url)
-        # elif category == "cz_song":
-        #     param = item["param"]
-        #     succ = crawl_song(url, param[0], param[1], param[2], param[3])
+        elif category == "cz_song":
+            param = item["param"]
+            succ = crawl_song(url, param[0], param[1], thread_id)
         # elif category == "ah_downloadsong":
         #     song_name = item["param"][0]
             # succ = download_song(url, song_name)
@@ -379,17 +429,59 @@ def crawl_kugou_job():
         else:
             failJob(job)
             FileLogger.error(f"[{thread_id}] fail on {url} of {category}")
-        time.sleep(1)
+        time.sleep(0)
         return succ
 
-    worker = MultiThreadQueueWorker(threadNum=20, minQueueSize=500, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
+    worker = MultiThreadQueueWorker(threadNum=1, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()
 
+def _get_mid():
+    js_code = """
+function Guid() {
+    function e() {
+        return (65536 * (1 + Math.random()) | 0).toString(16).substring(1)
+    }
+    return e() + e() + "-" + e() + "-" + e() + "-" + e() + "-" + e() + e() + e()
+}
+    """
+    ctx = execjs.compile(js_code)
+    guid = ctx.call("Guid")
+    return guid
 
 if __name__ == "__main__":
-    connect(db="kugou", alias="kugou", username="canoxu", password="4401821211", authentication_source='admin')
+    connect(host="192.168.0.116", port=27017, db="kugou", alias="kugou", username="canoxu", password="4401821211", authentication_source='admin')
 
-    startProxy(mode=ProxyMode.PROXY_POOL)
+    # startProxy(mode=ProxyMode.NO_PROXY)
     crawl_kugou_job()
 
-    # download_song("https://webfs.hw.kugou.com/202310241620/3ac9ef45e72247a1ab2f1e1b6752855c/v2/ff0a168777ea56e0737c025774c025b1/G195/M03/1B/09/Y4cBAF5zR7KATFN3ABctjo-3aW0724.mp3", "周杰伦、Lara梁心颐 - 珊瑚海")
+    # download_song("https://webfs.hw.kugou.com/202310241620/3ac9ef45e72247a1ab2f1e1b6752855c/v2/ff0a168777ea56e0737c025774c025b1/G195/M03/1B/09/Y4cBAF5zR7KATFN3ABctjo-3aW0724.mp3", "周杰伦、Lara梁心颐 - 珊瑚海")import os
+
+    # fs = open("/home/cano/list.txt", "r")
+    # fs = open("D:/list.txt", "r")
+    # count= 0
+    #
+    # url = fs.readline()
+    # url = url.strip()
+    # while len(url) > 0:
+    #     songlist = KugouSongList.objects(url=url).first()
+    #     if songlist is not None:
+    #         songs = songlist.songs
+    #         for song in songs:
+    #             songurl = song["url"]
+    #             name = song["title"]
+    #             left = songurl.rfind("/")
+    #             right = songurl.rfind(".html")
+    #             identify = songurl[left + 1:right] if left >= 0 and right >= 0 else None
+    #             if identify is not None:
+    #                 _create_or_addto_song(identify, name, songurl, songlist)
+    #
+    #     url = fs.readline()
+    #     url = url.strip()
+    #
+    #     count += 1
+    #     if count % 100 == 0:
+    #         print(count)
+    # _create_or_addto_song(identify, name, songurl, songlist)
+
+    # obj = _crawl_song_url("https://www.kugou.com/mixsong/j2i4n34.html", "j2i4n34")
+    # print(obj)
