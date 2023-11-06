@@ -13,13 +13,16 @@ import urllib
 import math
 from queue import Queue
 from mongoengine import connect, Document, StringField, DictField, BooleanField, DateTimeField, IntField, ListField, LongField
+from requests_html import HTMLSession
+
 from utils.Job import createJob, finishJob, failJob
 from utils.httpProxy import getHTMLSession, startProxy, ProxyMode
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
 from kuwo.js_call import js_context, run_inline_javascript
 
-HEADERS = {
+THREAD_NUM = 1
+BASIC_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
     "Accept-Encoding": "gzip, deflate, br",
@@ -27,12 +30,13 @@ HEADERS = {
     "Referer": "https://www.kuwo.cn/",
     "Secret": None
 }
-
-COOKIES = {
+BASIC_COOKIES = {
     "Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324": None,  # 随着请求经常变化, 一般在请求之前会有set-cookies
     "Hm_lpvt_cdb524f42f0ce19b169a8071123a4797": "1699117858",
     "Hm_lvt_cdb524f42f0ce19b169a8071123a4797": "1699109316"
 }
+HEADERS = []
+COOKIES = []
 
 class KuwoJob(Document):
     category = StringField(required=True)  # job分型
@@ -110,26 +114,26 @@ def _get_reqid():
     return reqid
 
 # 使用网页中一样的代码来生成search url
-def _gen_keyword_search_url(keyword:str, page_num:int, hm_value:str):
+def _gen_keyword_search_url(thread_id:int, keyword:str, page_num:int, hm_value:str):
     secret = _encode_secret(hm_value)
-    HEADERS["Secret"] = secret
+    HEADERS[thread_id]["Secret"] = secret
     template = "https://www.kuwo.cn/api/www/search/searchPlayListBykeyWord?key=%s&pn=%s&rn=30&httpsStatus=1&reqId=%s&plat=web_www&from="
     reqid = _get_reqid()
     url = template % (keyword, str(page_num), reqid)
     return url
 
 # 使用网页中一样的代码来生成songlist url
-def _gen_songlist_url(songlist_id:str, page_num:int, hm_value:str):
+def _gen_songlist_url(thread_id:int, songlist_id:str, page_num:int, hm_value:str):
     secret = _encode_secret(hm_value)
-    HEADERS["Secret"] = secret
+    HEADERS[thread_id]["Secret"] = secret
     template = "https://www.kuwo.cn/api/www/playlist/playListInfo?pid=%s&pn=%s&rn=20&httpsStatus=1&reqId=%s&plat=web_www"
     reqid = _get_reqid()
     url = template % (songlist_id, str(page_num), reqid)
     return url
 
-def _gen_song_playurl(song_id:str, hm_value:str):
+def _gen_song_playurl(thread_id:int, song_id:str, hm_value:str):
     secret = _encode_secret(hm_value)
-    HEADERS["Secret"] = secret
+    HEADERS[thread_id]["Secret"] = secret
     template = "https://www.kuwo.cn/api/v1/www/music/playUrl?mid=%s&type=music&httpsStatus=1&reqId=%s&plat=web_www&from="
     reqid = _get_reqid()
     url = template % (song_id, reqid)
@@ -184,8 +188,8 @@ def _create_or_addto_song(song_id:str, songinfo:dict, songlist:KuwoSongList):
     song.save()
     return song
 
-def _get_hm_cookie():
-    if HEADERS["Secret"] is None:
+def _get_hm_cookie(thread_id:int):
+    if HEADERS[thread_id]["Secret"] is None:
         session = getHTMLSession()
         pageurl = "https://www.kuwo.cn"
         response = session.get(pageurl)
@@ -212,13 +216,13 @@ def _is_chinese(text):
     return chinese_regex.search(text) is not None and japanese_regex.search(text) is None
 
 # 通过关键字搜索获得歌单信息
-def crawl_keyword(url:str, keyword:str, page_num:int):
+def crawl_keyword(thread_id:int, url:str, keyword:str, page_num:int):
     session = getHTMLSession()
-    hm_value = _get_hm_cookie()
+    hm_value = _get_hm_cookie(thread_id)
 
     try:
-        apiurl = _gen_keyword_search_url(keyword, page_num, hm_value)
-        response = session.get(apiurl, headers=HEADERS, cookies=COOKIES)
+        apiurl = _gen_keyword_search_url(thread_id, keyword, page_num, hm_value)
+        response = session.get(apiurl, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
         _set_hm_cookie(response.headers)
         jsonobj = json.loads(response.text)
@@ -266,12 +270,12 @@ def crawl_keyword(url:str, keyword:str, page_num:int):
         return False
 
 # 爬取歌单信息
-def crawl_songlist(songlist_id:str, page_num:int):
+def crawl_songlist(thread_id:int, songlist_id:str, page_num:int):
     session = getHTMLSession()
-    hm_value = _get_hm_cookie()
+    hm_value = _get_hm_cookie(thread_id)
     try:
-        apiurl = _gen_songlist_url(songlist_id, page_num, hm_value)
-        response = session.get(apiurl, headers=HEADERS, cookies=COOKIES)
+        apiurl = _gen_songlist_url(thread_id, songlist_id, page_num, hm_value)
+        response = session.get(apiurl, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
         _set_hm_cookie(response.headers)
         jsonobj = json.loads(response.text)
@@ -325,13 +329,13 @@ def crawl_songlist(songlist_id:str, page_num:int):
         return False
 
 # 爬取歌曲信息, 由于歌曲信息在之前已经爬取，这里主要是爬取歌词
-def crawl_song(url:str, song_id:str):
+def crawl_song(thread_id:int, url:str, song_id:str):
     song = KuwoSong.objects(identify=song_id).first()
     if song is None: return True
 
     session = getHTMLSession()
     try:
-        response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        response = session.get(url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
 
         script_elems = response.html.find("script")
@@ -378,19 +382,19 @@ def crawl_song(url:str, song_id:str):
         return False
 
 # 获得播放url
-def crawl_playurl(url:str, song_id:str):
+def crawl_playurl(thread_id:int, url:str, song_id:str):
     song = KuwoSong.objects(identify=song_id).first()
     if song is None: return True
 
     session = getHTMLSession()
-    hm_value = _get_hm_cookie()
+    hm_value = _get_hm_cookie(thread_id)
     try:
-        apiurl = _gen_song_playurl(song_id, hm_value)
-        HEADERS["Referer"] = "https://www.kuwo.cn/play_detail/%s" % song_id
-        response = session.get(apiurl, headers=HEADERS, cookies=COOKIES)
+        apiurl = _gen_song_playurl(thread_id, song_id, hm_value)
+        HEADERS[thread_id]["Referer"] = "https://www.kuwo.cn/play_detail/%s" % song_id
+        response = session.get(apiurl, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
         _set_hm_cookie(response.headers)
-        HEADERS["Referer"] = "https://www.kuwo.cn/"
+        HEADERS[thread_id]["Referer"] = "https://www.kuwo.cn/"
         jsonobj = json.loads(response.text)
 
         playurl = jsonobj.get("data", {}).get("url", None)
@@ -417,16 +421,16 @@ def crawl_playurl(url:str, song_id:str):
 
 # 下载mp3， 只能下载免费的
 DOWNLOAD_BASE_PATH = None
-def download_song(url:str, song_id:str, artist:str, song_name:str):
+def download_song(thread_id:int, url:str, song_id:str, artist:str, song_name:str):
     if DOWNLOAD_BASE_PATH is None:
         FileLogger.error("please set the DOWNLOAD_BASE_PATH !")
         return False
     song = KuwoSong.objects(identify=song_id).first()
     if song is None: return True
 
-    session = getHTMLSession()
+    session = HTMLSession()  # direct download, don't use any proxy
     try:
-        response = session.get(url, headers=HEADERS, cookies=COOKIES)
+        response = session.get(url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
 
         # find the file path
@@ -446,7 +450,6 @@ def download_song(url:str, song_id:str, artist:str, song_name:str):
             song.filepath = filepath
             song.save()
 
-        session.markRequestSuccess()
         return True
 
     except Exception as ex:
@@ -477,22 +480,22 @@ def crawl_kuwo_job():
         if category == "az_searchkeyword":
             keyword = item["param"][0]
             page_num = int(item["param"][1])
-            succ = crawl_keyword(url, keyword, page_num)
+            succ = crawl_keyword(thread_id, url, keyword, page_num)
         elif category == "bz_songlist":
             identify = item["param"][0]
             page_num = int(item["param"][1])
-            succ = crawl_songlist(identify, page_num)
+            succ = crawl_songlist(thread_id, identify, page_num)
         elif category == "cz_song":
             identify = item["param"][0]
-            succ = crawl_song(url, identify)
+            succ = crawl_song(thread_id, url, identify)
         elif category == "dz_playurl":
             identify = item["param"][0]
-            succ = crawl_playurl(url, identify)
+            succ = crawl_playurl(thread_id, url, identify)
         elif category == "ez_download":
             identify = item["param"][0]
             artist = item["param"][1]
             song_name = item["param"][2]
-            succ = download_song(url, identify, artist, song_name)
+            succ = download_song(thread_id, url, identify, artist, song_name)
 
         if succ:
             finishJob(job)
@@ -503,7 +506,12 @@ def crawl_kuwo_job():
         time.sleep(1)
         return succ
 
-    worker = MultiThreadQueueWorker(threadNum=10, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
+    # copy headers and cookies to make sure each thread has its own header and cookies
+    for i in range(THREAD_NUM):
+        HEADERS.append(BASIC_HEADERS.copy())
+        COOKIES.append(BASIC_COOKIES.copy())
+
+    worker = MultiThreadQueueWorker(threadNum=THREAD_NUM, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()
 
 
@@ -511,8 +519,9 @@ if __name__ == "__main__":
     connect(host="192.168.0.116", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
 
     DOWNLOAD_BASE_PATH = "D:/test/"
-    DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
+    # DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
 
-    startProxy(mode=ProxyMode.NO_PROXY)
+    THREAD_NUM = 1
+    startProxy(mode=ProxyMode.PROXY_POOL)
     crawl_kuwo_job()
 
