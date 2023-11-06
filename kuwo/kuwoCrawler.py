@@ -105,6 +105,7 @@ class SongType(Enum):
     ReadyToDownload = "readytodownload"
     VIPSong = "vipsong"
     NotChineseSong = "notchinesesong"
+    TooLongName = "toolongname"
     Unknown = "unknown"
 
 def _encode_secret(token):
@@ -142,11 +143,13 @@ def _gen_song_playurl(thread_id:int, song_id:str, hm_value:str):
     return url
 
 def _check_song_type(song:KuwoSong):
-    if song.songlistcount < 20 and song.avg_play_count < 1 * 10000 and song.max_play_count < 5 * 10000:
+    if song.songlistcount < 20 and song.avg_play_count < 5000 and song.max_play_count < 10000:
         return SongType.LowPlayCount
 
     artist = song.info.get("artist", "englistartist")
     song_name = song.info.get("name", "englistname")
+    if len(artist) > 20 or len(song_name) > 20:
+        return SongType.TooLongName
     if not _is_chinese(artist) and not _is_chinese(song_name):
         return SongType.NotChineseSong
 
@@ -279,7 +282,7 @@ def crawl_songlist(thread_id:int, songlist_id:str, page_num:int):
         jsonobj = json.loads(response.text)
 
         # save back to KuwoSongList object
-        songlist = KuwoSongList.objects(identify=songlist_id).first()
+        songlist = KuwoSongList.objects(identify=songlist_id).no_dereference().first()
         if songlist is None: return False
 
         data = jsonobj.get("data", {})
@@ -479,7 +482,26 @@ def download_worker(thread_id:int):
 
 def crawl_kuwo_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
-        for job in KuwoJob.objects(category__ne="ez_download", finished=False).order_by("-category").limit(500):
+        # ez_download jobs less than 1000, then just crawl bz_songlist to add more download jobs
+        unfinished_download = KuwoJob.objects(category="ez_download", finished=False).count()
+        if unfinished_download < 1000:
+            song_jobs = 100
+            other_jobs = 400
+        else:
+            song_jobs = 100
+            other_jobs = 400
+
+        # for job in KuwoJob.objects(category="cz_song", finished=False).order_by("-category").limit(song_jobs):
+        #     url = job.name
+        #     category = job.category
+        #     param = job.param
+        #     item_queue.put({
+        #         "job": job,
+        #         "url": url,
+        #         "category": category,
+        #         "param": param
+        #     })
+        for job in KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "dz_playurl"], finished=False).order_by("-category").limit(other_jobs):
             url = job.name
             category = job.category
             param = job.param
@@ -534,10 +556,11 @@ def crawl_kuwo_job(thread_num:int=1):
 
 if __name__ == "__main__":
     # connect(db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
+    # connect(host="192.168.0.116", port=27017, db="kuwo", alias="default", username="canoxu", password="4401821211", authentication_source='admin')
     connect(host="192.168.0.116", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
 
     # DOWNLOAD_BASE_PATH = "D:/test/"
     DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
 
     startProxy(mode=ProxyMode.PROXY_POOL)
-    crawl_kuwo_job(thread_num=20)
+    crawl_kuwo_job(thread_num=1)
