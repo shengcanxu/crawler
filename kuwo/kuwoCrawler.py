@@ -2,6 +2,7 @@ import os
 import random
 import re
 import sys
+
 from enum import Enum
 from threading import Thread
 
@@ -22,7 +23,7 @@ from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
 from kuwo.js_call import js_context, run_inline_javascript
 
-THREAD_NUM = 1
+DOWNLOAD_BASE_PATH = "D:/songfiles/"
 BASIC_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -141,22 +142,18 @@ def _gen_song_playurl(thread_id:int, song_id:str, hm_value:str):
     return url
 
 def _check_song_type(song:KuwoSong):
-    # if song.songlistcount >= 10:
-    #     return SongType.ReadyToDownload
-    # elif song.avg_play_count < 1 * 10000 and song.max_play_count < 5 * 10000:
-    #     return SongType.LowPlayCount
+    if song.songlistcount < 20 and song.avg_play_count < 1 * 10000 and song.max_play_count < 5 * 10000:
+        return SongType.LowPlayCount
 
     artist = song.info.get("artist", "englistartist")
     song_name = song.info.get("name", "englistname")
     if not _is_chinese(artist) and not _is_chinese(song_name):
         return SongType.NotChineseSong
 
-    if song.isvip is False:  # free songs
-        return SongType.ReadyToDownload
-    elif song.isvip is True:  # vip songs
+    if song.isvip is True:  # vip songs
         return SongType.VIPSong
-    else:
-        return SongType.Unknown
+    else:  # free songs
+        return SongType.ReadyToDownload
 
 def _create_or_addto_song(song_id:str, songinfo:dict, songlist:KuwoSongList):
     songurl = "https://www.kuwo.cn/play_detail/%s" % song_id
@@ -205,7 +202,7 @@ def _get_hm_cookie(thread_id:int):
         return hm_value
 
 def _set_hm_cookie(thread_id:int, headers):
-    new_cookie = headers["Set-Cookie"]
+    new_cookie = headers.get("Set-Cookie", None)
     if new_cookie is not None and len(new_cookie) >= 76:
         new_cookie = re.sub(r";.*", "", new_cookie)
         hm_value = new_cookie.split("=")[1]
@@ -421,7 +418,6 @@ def crawl_playurl(thread_id:int, url:str, song_id:str):
         return False
 
 # 下载mp3， 只能下载免费的
-DOWNLOAD_BASE_PATH = None
 def download_song(thread_id:int, url:str, song_id:str, artist:str, song_name:str):
     if DOWNLOAD_BASE_PATH is None:
         FileLogger.error("please set the DOWNLOAD_BASE_PATH !")
@@ -481,7 +477,7 @@ def download_worker(thread_id:int):
                 FileLogger.error(f"[{thread_id}] fail on {url} of {category}")
             time.sleep(0)
 
-def crawl_kuwo_job():
+def crawl_kuwo_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
         for job in KuwoJob.objects(category__ne="ez_download", finished=False).order_by("-category").limit(500):
             url = job.name
@@ -525,23 +521,23 @@ def crawl_kuwo_job():
         return succ
 
     # copy headers and cookies to make sure each thread has its own header and cookies
-    for i in range(THREAD_NUM+1):
+    for i in range(thread_num+1):
         HEADERS.append(BASIC_HEADERS.copy())
         COOKIES.append(BASIC_COOKIES.copy())
 
-    thread = Thread(target=download_worker, args=[THREAD_NUM])
-    thread.start()
+    # start a separate thread to downlaod song files
+    # thread = Thread(target=download_worker, args=[thread_num])
+    # thread.start()
 
-    worker = MultiThreadQueueWorker(threadNum=THREAD_NUM, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
+    worker = MultiThreadQueueWorker(threadNum=thread_num, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()
 
 if __name__ == "__main__":
+    # connect(db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
     connect(host="192.168.0.116", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
 
-    DOWNLOAD_BASE_PATH = "D:/test/"
-    # DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
+    # DOWNLOAD_BASE_PATH = "D:/test/"
+    DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
 
-    THREAD_NUM = 1
     startProxy(mode=ProxyMode.PROXY_POOL)
-    crawl_kuwo_job()
-
+    crawl_kuwo_job(thread_num=20)

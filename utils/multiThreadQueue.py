@@ -1,6 +1,6 @@
 # 用于多线程执行爬虫程序
 # python多线程教程：https://www.cnblogs.com/yuanwt93/p/15886333.html
-
+import traceback
 from threading import Thread, Lock, Event
 import time
 from queue import Queue
@@ -77,7 +77,7 @@ class MultiThreadQueueWorker:
 
             except Exception as ex:
                 print(ex)
-                print(f"error on thread {thread_id}")
+                print(f"<multiThreadQueue.py>error on thread {thread_id}")
                 errorCount += 1
                 if errorCount >= 5:
                     time.sleep(10)
