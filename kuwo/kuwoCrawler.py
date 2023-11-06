@@ -3,6 +3,7 @@ import random
 import re
 import sys
 from enum import Enum
+from threading import Thread
 
 import pinyin
 import hashlib
@@ -197,18 +198,18 @@ def _get_hm_cookie(thread_id:int):
         new_cookie = response.headers["Set-Cookie"]
         new_cookie = re.sub(r";.*", "", new_cookie)
         hm_value = new_cookie.split("=")[1]
-        COOKIES["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"] = hm_value
+        COOKIES[thread_id]["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"] = hm_value
         return hm_value
     else:
-        hm_value = COOKIES["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"]
+        hm_value = COOKIES[thread_id]["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"]
         return hm_value
 
-def _set_hm_cookie(headers):
+def _set_hm_cookie(thread_id:int, headers):
     new_cookie = headers["Set-Cookie"]
     if new_cookie is not None and len(new_cookie) >= 76:
         new_cookie = re.sub(r";.*", "", new_cookie)
         hm_value = new_cookie.split("=")[1]
-        COOKIES["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"] = hm_value
+        COOKIES[thread_id]["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"] = hm_value
 
 def _is_chinese(text):
     chinese_regex = re.compile('^[\u4e00-\u9fff]+')
@@ -224,7 +225,7 @@ def crawl_keyword(thread_id:int, url:str, keyword:str, page_num:int):
         apiurl = _gen_keyword_search_url(thread_id, keyword, page_num, hm_value)
         response = session.get(apiurl, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
-        _set_hm_cookie(response.headers)
+        _set_hm_cookie(thread_id, response.headers)
         jsonobj = json.loads(response.text)
 
         songlists = jsonobj.get("data", {}).get("list", [])
@@ -277,7 +278,7 @@ def crawl_songlist(thread_id:int, songlist_id:str, page_num:int):
         apiurl = _gen_songlist_url(thread_id, songlist_id, page_num, hm_value)
         response = session.get(apiurl, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
-        _set_hm_cookie(response.headers)
+        _set_hm_cookie(thread_id, response.headers)
         jsonobj = json.loads(response.text)
 
         # save back to KuwoSongList object
@@ -393,7 +394,7 @@ def crawl_playurl(thread_id:int, url:str, song_id:str):
         HEADERS[thread_id]["Referer"] = "https://www.kuwo.cn/play_detail/%s" % song_id
         response = session.get(apiurl, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
-        _set_hm_cookie(response.headers)
+        _set_hm_cookie(thread_id, response.headers)
         HEADERS[thread_id]["Referer"] = "https://www.kuwo.cn/"
         jsonobj = json.loads(response.text)
 
@@ -434,11 +435,14 @@ def download_song(thread_id:int, url:str, song_id:str, artist:str, song_name:str
         if response is None: return False
 
         # find the file path
-        name_pinyin = pinyin.get(artist)
+        name_pinyin = pinyin.get(artist, format="strip")
         first_char = name_pinyin[0].upper() if len(name_pinyin) > 0 else "A"
         filepath = os.path.join(DOWNLOAD_BASE_PATH, first_char)
         if not os.path.exists(filepath):
             os.mkdir(filepath)
+
+        artist = re.sub(r"[\\/:\*\?\"\<\>\|：？“《》]", "", artist)
+        song_name = re.sub(r"[\\/:\*\?\"\<\>\|：？“《》]", "", song_name)
         filepath = os.path.join(filepath, artist)
         if not os.path.exists(filepath):
             os.mkdir(filepath)
@@ -455,12 +459,31 @@ def download_song(thread_id:int, url:str, song_id:str, artist:str, song_name:str
     except Exception as ex:
         FileLogger.error(ex)
         FileLogger.error(f"error on crawling download_song: {song_id} !")
-        session.markRequestFails()
         return False
+
+def download_worker(thread_id:int):
+    while True:
+        time.sleep(5)
+        for job in KuwoJob.objects(category="ez_download", finished=False).limit(50):
+            url = job.name
+            category = job.category
+            param = job.param
+            identify = param[0]
+            artist = param[1]
+            song_name = param[2]
+
+            succ = download_song(thread_id, url, identify, artist, song_name)
+            if succ:
+                finishJob(job)
+                FileLogger.warning(f"[{thread_id}] success on {url} of {category}")
+            else:
+                failJob(job)
+                FileLogger.error(f"[{thread_id}] fail on {url} of {category}")
+            time.sleep(0)
 
 def crawl_kuwo_job():
     def create_job_worker(item_queue:Queue):
-        for job in KuwoJob.objects(finished=False).order_by("-category").limit(500):
+        for job in KuwoJob.objects(category__ne="ez_download", finished=False).order_by("-category").limit(500):
             url = job.name
             category = job.category
             param = job.param
@@ -491,11 +514,6 @@ def crawl_kuwo_job():
         elif category == "dz_playurl":
             identify = item["param"][0]
             succ = crawl_playurl(thread_id, url, identify)
-        elif category == "ez_download":
-            identify = item["param"][0]
-            artist = item["param"][1]
-            song_name = item["param"][2]
-            succ = download_song(thread_id, url, identify, artist, song_name)
 
         if succ:
             finishJob(job)
@@ -507,13 +525,15 @@ def crawl_kuwo_job():
         return succ
 
     # copy headers and cookies to make sure each thread has its own header and cookies
-    for i in range(THREAD_NUM):
+    for i in range(THREAD_NUM+1):
         HEADERS.append(BASIC_HEADERS.copy())
         COOKIES.append(BASIC_COOKIES.copy())
 
+    thread = Thread(target=download_worker, args=[THREAD_NUM])
+    thread.start()
+
     worker = MultiThreadQueueWorker(threadNum=THREAD_NUM, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()
-
 
 if __name__ == "__main__":
     connect(host="192.168.0.116", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')

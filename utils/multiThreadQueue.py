@@ -23,7 +23,6 @@ class MultiThreadQueueWorker:
     def startAllThreads(self):
         threadList = []
         for i in range(self.threadNum):
-            event = Event()
             thread = Thread(target=self.worker, args=[i])
             self.threadList.append(thread)
             thread.start()
@@ -51,7 +50,7 @@ class MultiThreadQueueWorker:
             if addedItemLen <= 0:
                 break
 
-    def worker(self, threadId):
+    def worker(self, thread_id:int):
         errorCount = 0
         sleepSeconds = 0
         while True:
@@ -63,11 +62,11 @@ class MultiThreadQueueWorker:
                     if sleepSeconds >= 60:
                         break
                     else:
-                        print(f"thread {threadId} sleeps {sleepSeconds} seconds")
+                        print(f"thread {thread_id} sleeps {sleepSeconds} seconds")
                         continue
                 sleepSeconds = 0
 
-                succ = self.crawlFunc(threadId, item)
+                succ = self.crawlFunc(thread_id, item)
                 if succ is False:
                     errorCount += 1
                     if errorCount >= 5:
@@ -78,7 +77,7 @@ class MultiThreadQueueWorker:
 
             except Exception as ex:
                 print(ex)
-                print(f"error on thread {threadId}")
+                print(f"error on thread {thread_id}")
                 errorCount += 1
                 if errorCount >= 5:
                     time.sleep(10)
