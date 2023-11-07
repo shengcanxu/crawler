@@ -543,6 +543,7 @@ def crawl_kuwo_job(thread_num:int=1):
     worker = MultiThreadQueueWorker(threadNum=thread_num, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()
 
+# 爬取酷我的歌曲信息和mp3
 if __name__ == "__main__":
     # connect(db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
     connect(host="192.168.0.116", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
@@ -550,6 +551,9 @@ if __name__ == "__main__":
     # DOWNLOAD_BASE_PATH = "D:/test/"
     DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
 
-    startProxy(mode=ProxyMode.PROXY_POOL)
-    crawl_kuwo_job(thread_num=1)
+    # startProxy(mode=ProxyMode.PROXY_POOL)
+    # crawl_kuwo_job(thread_num=1)
 
+    url = "https://www.kuwo.cn/play_detail/303680991"
+    identify = "303680991"
+    crawl_song(1, url, identify)
