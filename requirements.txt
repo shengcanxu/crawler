@@ -1,0 +1,11 @@
+mongoengine==0.23.1
+pinyin==0.4.0
+PyExecJS==1.5.1
+PyPDF2==1.26.0
+PyPDF2==3.0.1
+pyppeteer==1.0.2
+python_dateutil==2.8.2
+python_dateutil==2.8.1
+Requests==2.31.0
+requests_html==0.10.0
+warcio==1.7.4
