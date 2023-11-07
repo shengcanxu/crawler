@@ -484,24 +484,12 @@ def crawl_kuwo_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
         # ez_download jobs less than 1000, then just crawl bz_songlist to add more download jobs
         unfinished_download = KuwoJob.objects(category="ez_download", finished=False).count()
-        if unfinished_download < 1000:
-            song_jobs = 100
-            other_jobs = 400
+        if unfinished_download > 1000:
+            joblist = KuwoJob.objects(category__ne="ez_download", finished=False).order_by("-category").limit(500)
         else:
-            song_jobs = 100
-            other_jobs = 400
+            joblist = KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "dz_playurl"], finished=False).order_by("-category").limit(500)
 
-        # for job in KuwoJob.objects(category="cz_song", finished=False).order_by("-category").limit(song_jobs):
-        #     url = job.name
-        #     category = job.category
-        #     param = job.param
-        #     item_queue.put({
-        #         "job": job,
-        #         "url": url,
-        #         "category": category,
-        #         "param": param
-        #     })
-        for job in KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "dz_playurl"], finished=False).order_by("-category").limit(other_jobs):
+        for job in joblist:
             url = job.name
             category = job.category
             param = job.param
@@ -545,6 +533,7 @@ def crawl_kuwo_job(thread_num:int=1):
     # copy headers and cookies to make sure each thread has its own header and cookies
     for i in range(thread_num+1):
         HEADERS.append(BASIC_HEADERS.copy())
+
         COOKIES.append(BASIC_COOKIES.copy())
 
     # start a separate thread to downlaod song files
@@ -556,7 +545,6 @@ def crawl_kuwo_job(thread_num:int=1):
 
 if __name__ == "__main__":
     # connect(db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
-    # connect(host="192.168.0.116", port=27017, db="kuwo", alias="default", username="canoxu", password="4401821211", authentication_source='admin')
     connect(host="192.168.0.116", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
 
     # DOWNLOAD_BASE_PATH = "D:/test/"
@@ -564,3 +552,4 @@ if __name__ == "__main__":
 
     startProxy(mode=ProxyMode.PROXY_POOL)
     crawl_kuwo_job(thread_num=1)
+
