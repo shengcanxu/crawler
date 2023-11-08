@@ -143,9 +143,6 @@ def _gen_song_playurl(thread_id:int, song_id:str, hm_value:str):
     return url
 
 def _check_song_type(song:KuwoSong):
-    if song.songlistcount < 20 and song.avg_play_count < 5000 and song.max_play_count < 10000:
-        return SongType.LowPlayCount
-
     artist = song.info.get("artist", "englistartist")
     song_name = song.info.get("name", "englistname")
     if len(artist) > 20 or len(song_name) > 20:
@@ -155,6 +152,9 @@ def _check_song_type(song:KuwoSong):
 
     if song.isvip is True:  # vip songs
         return SongType.VIPSong
+
+    if song.songlistcount < 15 and song.avg_play_count < 5000 and song.max_play_count < 10000:
+        return SongType.LowPlayCount
     else:  # free songs
         return SongType.ReadyToDownload
 
@@ -554,6 +554,19 @@ if __name__ == "__main__":
     # startProxy(mode=ProxyMode.PROXY_POOL)
     # crawl_kuwo_job(thread_num=1)
 
-    url = "https://www.kuwo.cn/play_detail/303680991"
-    identify = "303680991"
-    crawl_song(1, url, identify)
+    count = 0
+    ids = KuwoSong.objects().distinct("identify")
+    for song_id in ids:
+        song = KuwoSong.objects(identify=song_id).first()
+        count += 1
+        working = True
+        song_id = song.identify
+        song_type = _check_song_type(song)
+        song.type = song_type.value
+        song.save()
+
+        if song.isvip is False and song.type == SongType.ReadyToDownload.value:
+            playurl = "https://www.kuwo.cn/api/v1/www/music/playUrl?mid=%s" % song_id
+            createJob(KuwoJob, category="dz_playurl", name=playurl, param=[song_id])
+
+        if count % 500 == 0: print(count)
