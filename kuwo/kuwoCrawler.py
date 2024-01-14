@@ -57,7 +57,7 @@ class KuwoJob(Document):
 
 class KuwoKeyword(Document):
     keyword = StringField(required=True)
-    songlists = ListField(required=True)
+    songlists = ListField(required=False)
     crawledpages = ListField(required=True)
     meta = {
         "strict": True,
@@ -118,6 +118,7 @@ def _get_reqid():
 
 # 使用网页中一样的代码来生成search url
 def _gen_keyword_search_url(thread_id:int, keyword:str, page_num:int, hm_value:str):
+    keyword = urllib.parse.quote(keyword)
     secret = _encode_secret(hm_value)
     HEADERS[thread_id]["Secret"] = secret
     template = "https://www.kuwo.cn/api/www/search/searchPlayListBykeyWord?key=%s&pn=%s&rn=30&httpsStatus=1&reqId=%s&plat=web_www&from="
@@ -145,10 +146,10 @@ def _gen_song_playurl(thread_id:int, song_id:str, hm_value:str):
 def _check_song_type(song:KuwoSong):
     artist = song.info.get("artist", "englistartist")
     song_name = song.info.get("name", "englistname")
-    if len(artist) > 20 or len(song_name) > 20:
-        return SongType.TooLongName
     if not _is_chinese(artist) and not _is_chinese(song_name):
         return SongType.NotChineseSong
+    if len(artist) > 20 or len(song_name) > 20:
+        return SongType.TooLongName
 
     if song.isvip is True:  # vip songs
         return SongType.VIPSong
@@ -484,10 +485,11 @@ def crawl_kuwo_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
         # ez_download jobs less than 1000, then just crawl bz_songlist to add more download jobs
         unfinished_download = KuwoJob.objects(category="ez_download", finished=False).count()
-        if unfinished_download > 1000:
-            joblist = KuwoJob.objects(category__ne="ez_download", finished=False).order_by("-category").limit(500)
-        else:
+        joblist = []
+        if unfinished_download <= 1000:
             joblist = KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "dz_playurl"], finished=False).order_by("-category").limit(500)
+        if len(joblist) < 300:
+            joblist = KuwoJob.objects(category__ne="ez_download", finished=False).order_by("-category").limit(500)
 
         for job in joblist:
             url = job.name
@@ -552,21 +554,21 @@ if __name__ == "__main__":
     DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
 
     # startProxy(mode=ProxyMode.PROXY_POOL)
-    # crawl_kuwo_job(thread_num=1)
+    crawl_kuwo_job(thread_num=1)
 
-    count = 0
-    ids = KuwoSong.objects().distinct("identify")
-    for song_id in ids:
-        song = KuwoSong.objects(identify=song_id).first()
-        count += 1
-        working = True
-        song_id = song.identify
-        song_type = _check_song_type(song)
-        song.type = song_type.value
-        song.save()
-
-        if song.isvip is False and song.type == SongType.ReadyToDownload.value:
-            playurl = "https://www.kuwo.cn/api/v1/www/music/playUrl?mid=%s" % song_id
-            createJob(KuwoJob, category="dz_playurl", name=playurl, param=[song_id])
-
-        if count % 500 == 0: print(count)
+    # count = 0
+    # ids = KuwoSong.objects(type="toolongname").distinct("identify")
+    # for song_id in ids:
+    #     song = KuwoSong.objects(identify=song_id).first()
+    #     count += 1
+    #     working = True
+    #     song_id = song.identify
+    #     song_type = _check_song_type(song)
+    #     song.type = song_type.value
+    #     song.save()
+    #
+    #     if song.isvip is False and song.type == SongType.ReadyToDownload.value:
+    #         playurl = "https://www.kuwo.cn/api/v1/www/music/playUrl?mid=%s" % song_id
+    #         createJob(KuwoJob, category="dz_playurl", name=playurl, param=[song_id])
+    #
+    #     if count % 500 == 0: print(count)

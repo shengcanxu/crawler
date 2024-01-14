@@ -1,12 +1,9 @@
-import time
 import re
+import time
 from queue import Queue
-
-from mongoengine import Document
-from mongoengine import connect, Document, EmbeddedDocument, ListField, StringField, IntField, FloatField, ListField, DateTimeField, BooleanField
-from requests_html import HTMLSession
+from mongoengine import connect, Document, StringField, IntField, FloatField, ListField, DateTimeField, BooleanField
+from utils.Job import createJob, finishJob, failJob
 from utils.httpProxy import ProxyMode, startProxy, getHTMLSession
-from utils.Job import createJob, createOrUpdateJob, finishJob, failJob
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
 
@@ -39,7 +36,7 @@ class DouList(Document):
     douListId = StringField(required=True)
     title = StringField()
     follows = IntField()
-    bookList = ListField() # 会有重复内容
+    bookList = ListField()  # 会有重复内容
     meta = {
         "strict": True,
         "collection": "doulist",
@@ -51,33 +48,33 @@ class DoubanBook(Document):
     url = StringField(required=True)
     title = StringField()
     picture = StringField()
-    author = StringField() # 作者
-    publisher = StringField() # 出版社
-    producer = StringField() # 出品方
-    subTitle = StringField() # 副标题
-    publishDate = StringField() # 出版年
-    pageCount = StringField() # 页数
-    price = StringField() # 定价
-    padType = StringField() # 装帧
-    ISBN = StringField() # ISBN
-    orginalName = StringField() # 原作名
-    booklistName = StringField() # 丛书
+    author = StringField()  # 作者
+    publisher = StringField()  # 出版社
+    producer = StringField()  # 出品方
+    subTitle = StringField()  # 副标题
+    publishDate = StringField()  # 出版年
+    pageCount = StringField()  # 页数
+    price = StringField()  # 定价
+    padType = StringField()  # 装帧
+    ISBN = StringField()  # ISBN
+    orginalName = StringField()  # 原作名
+    booklistName = StringField()  # 丛书
 
-    rateNum = FloatField() # 评分
-    ratePeople = IntField() # 评价人数
-    star5 = FloatField() # 5星
+    rateNum = FloatField()  # 评分
+    ratePeople = IntField()  # 评价人数
+    star5 = FloatField()  # 5星
     star4 = FloatField()  # 4星
     star3 = FloatField()  # 3星
     star2 = FloatField()  # 2星
     star1 = FloatField()  # 1星
-    reading = IntField() # 在读
-    readComplete = IntField() # 读过
-    wantToRead = IntField() # 想读
-    contentDes = StringField() # 内容简介
-    authorDes = StringField() # 作者简介
-    catalog = StringField() # 目录
-    commentNum = IntField() # 评论数量
-    reviewNum = IntField() # 书评数量
+    reading = IntField()  # 在读
+    readComplete = IntField()  # 读过
+    wantToRead = IntField()  # 想读
+    contentDes = StringField()  # 内容简介
+    authorDes = StringField()  # 作者简介
+    catalog = StringField()  # 目录
+    commentNum = IntField()  # 评论数量
+    reviewNum = IntField()  # 书评数量
     relatedBooks = ListField()
 
     meta = {
