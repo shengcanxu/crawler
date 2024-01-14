@@ -1,14 +1,20 @@
 import json
 import time
 from queue import Queue
+from bilibili.biliapis import wbi
 from utils.multiThreadQueue import MultiThreadQueueWorker
 from mongoengine import connect, Document, StringField, DictField, BooleanField, DateTimeField, IntField, ListField, LongField
-
+from urllib import parse
 from utils.Job import createJob, finishJob, failJob
 from utils.httpProxy import getHTMLSession, startProxy, ProxyMode
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
 from kuwo.js_call import js_context, run_inline_javascript
+
+###
+# some code from https://github.com/NingmengLemon/BiliTools 
+# API description from : https://socialsisteryi.github.io/bilibili-API-collect/ 
+### 
 
 BASIC_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
@@ -20,6 +26,11 @@ BASIC_COOKIES = {
 }
 HEADERS = []
 COOKIES = []
+
+# url string template
+User_Videolist_Template = "https://api.bilibili.com/x/space/wbi/arc/search?mid=%s&ps=30&tid=0&pn=%s&keyword=&order=pubdate&platform=web&order_avoided=true"
+User_Relation_Template = "https://api.bilibili.com/x/relation/stat?vmid=%s"
+Related_Video_Template = "https://api.bilibili.com/x/web-interface/archive/related?bvid=%s"
 
 class BilibiliJob(Document):
     category = StringField(required=True)  # job分型
@@ -51,6 +62,7 @@ class BilibiliUser(Document):
         "db_alias": "bilibili"
     }
 
+# 视频关联推荐 "https://api.bilibili.com/x/web-interface/archive/related?bvid=%s" % bvid
 def crawl_related_videos(thread_id:int, url:str):
     global AVERAGE_SCORE, VIDEO_COUNT
     session = getHTMLSession()
@@ -58,28 +70,15 @@ def crawl_related_videos(thread_id:int, url:str):
         response = session.get(url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
 
-        script_elems = response.html.find("script")
-        script_elem, dataobj = None, None
-        for elem in script_elems:
-            if elem.attrs.get("src") is not None: continue
-            if elem.text.find("related") < 0: continue
-            if elem.text.find("window.__INITIAL_STATE__") >= 0:
-                script_elem = elem
-
-        if script_elem is not None:
-            text = script_elem.text.replace("window.__INITIAL_STATE__", "var dataobj")
-            endpos = text.find("};")
-            text = text[:endpos+2] if endpos >= 0 else text
-            dataobj = run_inline_javascript(text)
-
-        relateds = dataobj.get("related", []) if dataobj is not None else []
+        dataobj = json.loads(response.text)
+        relateds = dataobj["data"]
         for related in relateds:
             view = related.get("stat", {}).get("view", 0)
             comment = related.get("stat", {}).get("danmaku", 0)
             duration = related.get("duration", 0)
             userid = related.get("owner", {}).get("mid", None)
             username = related.get("owner", {}).get("name", "Unknown")
-            video_id = related.get("bvid", None)
+            bvid = related.get("bvid", None)
 
             # 根据观看量，评论量和视频时长计算出分值
             score = int( (view + comment * 100) * (duration / 60) )
@@ -89,12 +88,12 @@ def crawl_related_videos(thread_id:int, url:str):
                 if user is None:
                     user = BilibiliUser(userid=userid, name=username)
                     user.save()
-                    relation_url = "https://api.bilibili.com/x/relation/stat?vmid=%s" % userid
-                    createJob(BilibiliJob, category="bz_relation", name=relation_url)
+                    relation_url = User_Relation_Template % userid
+                    createJob(BilibiliJob, category="bz_relation", name=relation_url, param=[userid])
 
                     # use current video to find more related videos
-                    if video_id is not None:
-                        new_url = "https://www.bilibili.com/video/%s/" % video_id
+                    if bvid is not None and score >= 1000000:
+                        new_url = Related_Video_Template % bvid
                         job = createJob(BilibiliJob, category="az_relatedvideo", name=new_url)
                         job.score = score
                         job.save()
@@ -108,6 +107,7 @@ def crawl_related_videos(thread_id:int, url:str):
         session.markRequestFails()
         return True  # drop job if error on this crawl
 
+# 用户的关系数据 "https://api.bilibili.com/x/relation/stat?vmid=%s" % userid
 def crawl_relation(thread_id:int, url:str, userid:str):
     user = BilibiliUser.objects(userid=userid).first()
     if user is None: return False
@@ -126,7 +126,7 @@ def crawl_relation(thread_id:int, url:str, userid:str):
 
         # 10W以上关注的爬取视频列表
         if follower >= 100000:
-            videolist_url = "https://api.bilibili.com/x/space/wbi/arc/search?mid=%s&ps=30&tid=0&pn=1&keyword=&order=pubdate&platform=web&order_avoided=true" % userid
+            videolist_url = User_Videolist_Template % (userid, "1")
             createJob(BilibiliJob, category="cz_videolist", name=videolist_url, param=[userid, "1"])
 
         session.markRequestSuccess()
@@ -138,13 +138,20 @@ def crawl_relation(thread_id:int, url:str, userid:str):
         session.markRequestFails()
         return False
 
+# 用户的视频列表 "https://api.bilibili.com/x/space/wbi/arc/search?mid=%s&ps=30&tid=0&pn=1&keyword=&order=pubdate&platform=web&order_avoided=true" % userid
+# 接口文档： https://socialsisteryi.github.io/bilibili-API-collect/docs/user/space.html#%E6%9F%A5%E8%AF%A2%E7%94%A8%E6%88%B7%E6%8A%95%E7%A8%BF%E8%A7%86%E9%A2%91%E6%98%8E%E7%BB%86 
 def crawl_videolist(thread_id:int, url:str, userid:str, page_num:int):
     user = BilibiliUser.objects(userid=userid).first()
     if user is None: return False
 
+    pairs = url.split("?")[1].split("&")
+    params = {item.split("=")[0] : item.split("=")[1] for item in pairs}
+
+    wbi_url = url.split("?")[0] + "?" + parse.urlencode(wbi.sign(params=params))
+
     session = getHTMLSession()
     try:
-        response = session.get(url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
+        response = session.get(wbi_url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
         jsonobj = json.loads(response.text)
         datalist = jsonobj.get("data", {}).get("list", None)
@@ -165,7 +172,7 @@ def crawl_videolist(thread_id:int, url:str, userid:str, page_num:int):
         total = int(total)
         while total > page_num * 30:
             page_num += 1
-            new_url = "https://api.bilibili.com/x/space/wbi/arc/search?mid=%s&ps=30&tid=0&pn=%s&keyword=&order=pubdate&platform=web&order_avoided=true" % (userid, str(page_num))
+            new_url = User_Videolist_Template % (userid, str(page_num))
             createJob(BilibiliJob, category="cz_videolist", name=new_url, param=[userid, str(page_num)])
 
         session.markRequestSuccess()
@@ -179,7 +186,8 @@ def crawl_videolist(thread_id:int, url:str, userid:str, page_num:int):
 
 def crawl_bilibili_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
-        for job in BilibiliJob.objects(finished=False).order_by("-score").limit(500):
+        for job in BilibiliJob.objects(category__in=["az_relatedvideo", "bz_relation"], finished=False).limit(500): 
+        # for job in BilibiliJob.objects(category="cz_videolist", finished=False).limit(500):
             url = job.name
             category = job.category
             param = job.param
@@ -196,12 +204,12 @@ def crawl_bilibili_job(thread_num:int=1):
         category = item["category"]
         FileLogger.info(f"[{thread_id}] working on {url} of {category}")
         succ = False
-        if category == "az_relatedvideo":
+        if category == "az_relatedvideo":  # 视频关联推荐
             succ = crawl_related_videos(thread_id, url)
-        elif category == "bz_relation":
+        elif category == "bz_relation":  # 用户的关系数据 
             userid = item["param"][0]
             succ = crawl_relation(thread_id, url, userid)
-        elif category == "cz_videolist":
+        elif category == "cz_videolist":  # 用户的视频列表
             userid = item["param"][0]
             page_num = int(item["param"][1])
             succ = crawl_videolist(thread_id, url, userid, page_num)
@@ -225,7 +233,10 @@ def crawl_bilibili_job(thread_num:int=1):
 
 # 爬取bilibili的用户信息
 if __name__ == "__main__":
-    connect(host="192.168.0.116", port=27017, db="bilibili", alias="bilibili", username="canoxu", password="4401821211", authentication_source='admin')
+    connect(host="192.168.0.101", port=27017, db="bilibili", alias="bilibili", username="canoxu", password="4401821211", authentication_source='admin')
 
-    startProxy(mode=ProxyMode.PROXY_POOL)
-    crawl_bilibili_job(thread_num=20)
+    # startProxy(mode=ProxyMode.PROXY_POOL)
+    crawl_bilibili_job(thread_num=10)
+
+
+
