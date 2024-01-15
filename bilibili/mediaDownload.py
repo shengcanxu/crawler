@@ -175,9 +175,7 @@ This is usually caused by accessing vip media without vip account logged in.
         }
     return stream
 
-
-
-def crawl_download_audio(thread_id:int, userid:str, bvid:str, folder:str):
+def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_only=True):
     user = BilibiliUser.objects(userid=userid).first()
     if user is None: return False
 
@@ -193,11 +191,10 @@ def crawl_download_audio(thread_id:int, userid:str, bvid:str, folder:str):
     folder = os.path.join(folder, userid)
     if not os.path.exists(folder):
         os.mkdir(folder)
-    filename = os.path.join(folder, f"{userid}_{bvid}.m4s")
 
     try:
         stream_data = get_video_stream_urls(cid, bvid=bvid, hdr=True, _4k=True, dolby_vision=True, _8k=True)
-        astreams = stream_data["audio"]
+        astreams = stream_data["audio"] 
         aqs = []
         for astream in astreams:
             aqs.append(astream['quality'])
@@ -207,11 +204,31 @@ def crawl_download_audio(thread_id:int, userid:str, bvid:str, folder:str):
         succ = False
         for url in urls: 
             try:
+                filename = os.path.join(folder, f"{userid}_{bvid}_a.m4s")
                 # succ = download_media(url, filename)
                 succ = download_media_continue(url, filename)
             except:
                 continue
             if succ: break
+
+        if succ and not audio_only:   # download video
+            vstreams = stream_data["video"]
+            vqs = []
+            for vstream in vstreams:
+                vqs.append(vstream['quality'])
+            videostream = vstreams[vqs.index(max(vqs))]
+            urls = [videostream['url']] + videostream['url_backup']
+            
+            succ = False
+            for url in urls: 
+                try:
+                    filename = os.path.join(folder, f"{userid}_{bvid}_v.m4s")
+                    # succ = download_media(url, filename)
+                    succ = download_media_continue(url, filename)
+                except:
+                    continue
+                if succ: break
+
         return succ
     
     except Exception as ex:
@@ -244,7 +261,11 @@ def crawl_bilibili_job(thread_num:int=1, save_folder="./"):
         if category == "dz_downaudio":  # 下载音频
             userid = str(item["param"][0])
             bvid = str(item["param"][1])
-            succ = crawl_download_audio(thread_id, userid, bvid, save_folder)
+            succ = crawl_download_media(thread_id, userid, bvid, save_folder, audio_only=False)
+        elif category == "dz_downvideo": # 下载视频
+            userid = str(item["param"][0])
+            bvid = str(item["param"][1])
+            succ = crawl_download_media(thread_id, userid, bvid, save_folder, audio_only=False)
 
         if succ:
             finishJob(job)
