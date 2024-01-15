@@ -299,7 +299,6 @@ if __name__ == "__main__":
 
     # Global_Save_Path = "/home/cano/dataset/librivox/"
     Global_Save_Path = "D:/dataset/librivox/"
-    a = "abc"
     crawlLibrivox()
 
     # bookids = LibrivoxBook.objects().distinct("bookid")

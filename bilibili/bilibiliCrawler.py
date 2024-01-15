@@ -28,7 +28,7 @@ HEADERS = []
 COOKIES = []
 
 # url string template
-User_Videolist_Template = "https://api.bilibili.com/x/space/wbi/arc/search?mid=%s&ps=30&tid=0&pn=%s&keyword=&order=pubdate&platform=web&order_avoided=true"
+User_Videolist_Template = "https://api.bilibili.com/x/v2/medialist/resource/list?mobi_app=web&type=1&biz_id=%s&oid=%s&otype=2&ps=80&direction=false&desc=true&sort_field=2&tid=0&with_current=false"
 User_Relation_Template = "https://api.bilibili.com/x/relation/stat?vmid=%s"
 Related_Video_Template = "https://api.bilibili.com/x/web-interface/archive/related?bvid=%s"
 
@@ -55,7 +55,7 @@ class BilibiliUser(Document):
     following = LongField(required=False)
     taglist = DictField(required=False)
     videolist = ListField(required=False)
-    crawledpages = ListField(required=False)
+    crawledpages = ListField(required=False)  # store the crawlled oid
     meta = {
         "strict": True,
         "collection": "user",
@@ -107,7 +107,7 @@ def crawl_related_videos(thread_id:int, url:str):
         session.markRequestFails()
         return True  # drop job if error on this crawl
 
-# 用户的关系数据 "https://api.bilibili.com/x/relation/stat?vmid=%s" % userid
+# 用户的关系数据 https://api.bilibili.com/x/v2/medialist/resource/list?mobi_app=web&type=1&biz_id=300932080&oid=33488074&otype=2&ps=80&direction=false&desc=true&sort_field=2&tid=0&with_current=false 
 def crawl_relation(thread_id:int, url:str, userid:str):
     user = BilibiliUser.objects(userid=userid).first()
     if user is None: return False
@@ -126,8 +126,8 @@ def crawl_relation(thread_id:int, url:str, userid:str):
 
         # 10W以上关注的爬取视频列表
         if follower >= 100000:
-            videolist_url = User_Videolist_Template % (userid, "1")
-            createJob(BilibiliJob, category="cz_videolist", name=videolist_url, param=[userid, "1"])
+            videolist_url = User_Videolist_Template % (userid, "")
+            createJob(BilibiliJob, category="cz_videolist", name=videolist_url, param=[userid, ""])
 
         session.markRequestSuccess()
         return True
@@ -140,40 +140,36 @@ def crawl_relation(thread_id:int, url:str, userid:str):
 
 # 用户的视频列表 "https://api.bilibili.com/x/space/wbi/arc/search?mid=%s&ps=30&tid=0&pn=1&keyword=&order=pubdate&platform=web&order_avoided=true" % userid
 # 接口文档： https://socialsisteryi.github.io/bilibili-API-collect/docs/user/space.html#%E6%9F%A5%E8%AF%A2%E7%94%A8%E6%88%B7%E6%8A%95%E7%A8%BF%E8%A7%86%E9%A2%91%E6%98%8E%E7%BB%86 
-def crawl_videolist(thread_id:int, url:str, userid:str, page_num:int):
+def crawl_videolist(thread_id:int, url:str, userid:str, oid:str):
     user = BilibiliUser.objects(userid=userid).first()
     if user is None: return False
 
-    pairs = url.split("?")[1].split("&")
-    params = {item.split("=")[0] : item.split("=")[1] for item in pairs}
-
-    wbi_url = url.split("?")[0] + "?" + parse.urlencode(wbi.sign(params=params))
-
     session = getHTMLSession()
     try:
-        response = session.get(wbi_url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
+        response = session.get(url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
         if response is None: return False
         jsonobj = json.loads(response.text)
-        datalist = jsonobj.get("data", {}).get("list", None)
+        datalist = jsonobj.get("data", {}).get("media_list", None)
         if datalist is None: return False
 
-        tag_list = datalist.get("tlist", {})
-        video_list = datalist.get("vlist", [])
-        if user.taglist is None or len(user.taglist) == 0:
-            user.taglist = tag_list
-        if page_num not in user.crawledpages:
-            user.crawledpages.append(page_num)
-            for video in video_list:
+        if oid not in user.crawledpages:
+            user.crawledpages.append(oid)
+
+        lastid = None
+        exists_vids = [video["id"] for video in user.videolist]
+        exists_vids.sort()
+        for video in datalist:
+            if video["id"] not in exists_vids:
                 user.videolist.append(video)
+                lastid = video["id"]
         user.save()
 
         # 判断是否还有更多页面，如果有，创建job
-        total = jsonobj.get("data", {}).get("page", {}).get("count", "0")
-        total = int(total)
-        while total > page_num * 30:
-            page_num += 1
-            new_url = User_Videolist_Template % (userid, str(page_num))
-            createJob(BilibiliJob, category="cz_videolist", name=new_url, param=[userid, str(page_num)])
+        has_more = jsonobj.get("data", {}).get("has_more", False)
+        total = jsonobj.get("data", {}).get("total_count", 0)
+        if has_more and lastid is not None and total > len(user.videolist):
+            new_url = User_Videolist_Template % (userid, str(lastid))
+            createJob(BilibiliJob, category="cz_videolist", name=new_url, param=[userid, str(lastid)])
 
         session.markRequestSuccess()
         return True
@@ -186,7 +182,7 @@ def crawl_videolist(thread_id:int, url:str, userid:str, page_num:int):
 
 def crawl_bilibili_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
-        for job in BilibiliJob.objects(category__in=["az_relatedvideo", "bz_relation"], finished=False).limit(500): 
+        for job in BilibiliJob.objects(finished=False).order_by("-category").limit(500): 
         # for job in BilibiliJob.objects(category="cz_videolist", finished=False).limit(500):
             url = job.name
             category = job.category
@@ -211,8 +207,8 @@ def crawl_bilibili_job(thread_num:int=1):
             succ = crawl_relation(thread_id, url, userid)
         elif category == "cz_videolist":  # 用户的视频列表
             userid = item["param"][0]
-            page_num = int(item["param"][1])
-            succ = crawl_videolist(thread_id, url, userid, page_num)
+            oid = str(item["param"][1])
+            succ = crawl_videolist(thread_id, url, userid, oid)
 
         if succ:
             finishJob(job)
@@ -224,7 +220,7 @@ def crawl_bilibili_job(thread_num:int=1):
         return succ
 
     # copy headers and cookies to make sure each thread has its own header and cookies
-    for i in range(thread_num+1):
+    for i in range(thread_num):
         HEADERS.append(BASIC_HEADERS.copy())
         COOKIES.append(BASIC_COOKIES.copy())
 

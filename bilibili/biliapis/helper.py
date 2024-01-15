@@ -1,5 +1,31 @@
 import re
 
+def bvid_to_avid_offline(bvid):
+    _table = 'fZodR9XQDSUm21yCkr6zBqiveYah8bt4xsWpHnJE7jL5VG3guMTKNPAwcF'
+    _s = [11,10,3,8,4,6]
+    _tr = {}
+    _xor = 177451812
+    _add = 8728348608
+    for _ in range(58):
+        _tr[_table[_]] = _
+        
+    r = 0
+    for i in range(6):
+        r += _tr[bvid[_s[i]]]*58**i
+    return (r-_add)^_xor
+
+def avid_to_bvid_offline(avid):
+    _table = 'fZodR9XQDSUm21yCkr6zBqiveYah8bt4xsWpHnJE7jL5VG3guMTKNPAwcF'
+    _xor = 177451812
+    _add = 8728348608
+    _s = [11,10,3,8,4,6]
+    
+    avid = (avid^_xor)+_add
+    r = list('BV1  4 1 7  ')
+    for i in range(6):
+        r[_s[i]] = _table[avid//58**i%58]
+    return ''.join(r)
+
 def convert_number(a):
     try:
         a = int(a)
