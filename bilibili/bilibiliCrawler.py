@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import time
 from queue import Queue
@@ -56,6 +57,7 @@ class BilibiliUser(Document):
     taglist = DictField(required=False)
     videolist = ListField(required=False)
     crawledpages = ListField(required=False)  # store the crawlled oid
+    subtitles = ListField(required=False)
     meta = {
         "strict": True,
         "collection": "user",
@@ -184,6 +186,10 @@ def crawl_bilibili_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
         for job in BilibiliJob.objects(finished=False).order_by("-category").limit(500): 
         # for job in BilibiliJob.objects(category="cz_videolist", finished=False).limit(500):
+            try_date = job.tryDate
+            if try_date is not None and (datetime.now() - try_date).seconds < 3600 * 5: 
+                continue   # 出错后5小时再重试
+
             url = job.name
             category = job.category
             param = job.param

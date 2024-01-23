@@ -5,16 +5,16 @@ import platform
 from queue import Queue
 import json
 import time
-from urllib import parse, request
+from urllib import parse
 from bilibili.biliapis import wbi
 from bilibili.bilibiliCrawler import BilibiliJob, BilibiliUser
-from bilibili.downloader import download_media, download_media_continue
+from bilibili.downloader import download_media_continue
 from utils.Job import failJob, finishJob
 from utils.httpProxy import getHTMLSession
 
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
-from mongoengine import connect, Document, StringField, DictField, BooleanField, DateTimeField, IntField, ListField, LongField
+from mongoengine import connect
 
 
 BASIC_HEADERS = {
@@ -94,7 +94,7 @@ def get_video_stream_urls(cid,avid=None,bvid=None,dolby_vision=False,hdr=False,_
     # 尝试请求原来的接口2
     if not succ_flag:
         response = getHTMLSession().get(
-            api_legacy_backup+'?'+parse.urlencode(params),
+            api_legacy_backup + '?' + parse.urlencode(params),
             headers=HEADERS[0],
             cookies=COOKIES[0]
         )
@@ -108,7 +108,7 @@ def get_video_stream_urls(cid,avid=None,bvid=None,dolby_vision=False,hdr=False,_
     # 尝试请求原来的接口3
     if not succ_flag:
         response = getHTMLSession().get(
-            api_legacy_backup_2+'?'+parse.urlencode(params),
+            api_legacy_backup_2 + '?' + parse.urlencode(params),
             headers=HEADERS[0],
             cookies=COOKIES[0]
         )
@@ -175,9 +175,9 @@ This is usually caused by accessing vip media without vip account logged in.
         }
     return stream
 
-def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_only=True):
+def _get_cid(userid:str, bvid:str):
     user = BilibiliUser.objects(userid=userid).first()
-    if user is None: return False
+    if user is None: return None
 
     target_video = None
     videolist = user.videolist
@@ -185,8 +185,14 @@ def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_
         if video["bv_id"] == bvid:
             target_video = video
             break
-    if target_video is None: return False
+    if target_video is None: return None
+
     cid = target_video["pages"][0]["id"]
+    return cid
+
+def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_only=True):
+    cid = _get_cid(userid, bvid)
+    if cid is None: return False
 
     folder = os.path.join(folder, userid)
     if not os.path.exists(folder):
@@ -238,6 +244,71 @@ def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_
             os.remove(filename)
         return False
 
+def _subtitle_to_srt(jsondata):
+     srt_file = ''
+     bccdata = jsondata['body']
+     i = 1
+     for data in bccdata:
+         start = data['from']  # 获取开始时间
+         stop = data['to']  # 获取结束时间
+         content = data['content']  # 获取字幕内容
+         srt_file += '{}\n'.format(i)  # 加入序号(没有下标)
+
+         hour = math.floor(start) // 3600
+         minute = (math.floor(start) - hour * 3600) // 60
+         sec = math.floor(start) - hour * 3600 - minute * 60
+         minisec = int(math.modf(start)[0] * 100)  # 处理开始时间
+         srt_file += str(hour).zfill(2) + ':' + str(minute).zfill(2) + ':' + str(sec).zfill(2) + ',' + str(minisec).zfill(2)  # 将数字填充0并按照格式写入
+         srt_file += ' --> '
+         
+         hour = math.floor(stop) // 3600
+         minute = (math.floor(stop) - hour * 3600) // 60
+         sec = math.floor(stop) - hour * 3600 - minute * 60
+         minisec = abs(int(math.modf(stop)[0] * 100 - 1))  # 此处减1是为了防止两个字幕同时出现
+         srt_file += str(hour).zfill(2) + ':' + str(minute).zfill(2) + ':' + str(sec).zfill(2) + ',' + str(minisec).zfill(2)
+         srt_file += '\n' + content + '\n\n'  # 加入字幕文字
+         i += 1
+     return srt_file
+
+def crawl_get_subtitle(thread_id:int, userid:str, bvid:str, folder:str):
+    cid = _get_cid(userid, bvid)
+    if cid is None: return False
+
+    folder = os.path.join(folder, userid)
+    if not os.path.exists(folder):
+        os.mkdir(folder)
+
+    url = 'https://api.bilibili.com/x/player/v2?cid=%s&bvid=%s' % (cid, bvid)
+    session = getHTMLSession()
+    try:
+        response = session.get(url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
+        if response is None: return False
+
+        data = json.loads(response.text)
+        subtitles = data['data']['subtitle']['subtitles']
+        res = []
+        for item in data:
+            res.append({
+                'id': item['id'],
+                'lang': item['lan_doc'],  #语言
+                'lang_abb': item['lan'],  #语言简写
+                #'author_uid':item['author_mid'],
+                'url': 'https:' + item['subtitle_url'],  #将请求此url获得的json数据交给下面那个函数即可
+                'ai_subtitle': True if '/ai_subtitle/' in item['subtitle_url'] else False
+            })
+        
+        ### still have some error , few subtitle in bilibili ###
+
+        session.markRequestSuccess()
+        return True
+
+    except Exception as ex:
+        FileLogger.error(ex)
+        FileLogger.error(f"[{thread_id}]error on userid: {userid} bvid: {bvid} !")
+        session.markRequestFails()
+        return False    
+
+
 def crawl_bilibili_job(thread_num:int=1, save_folder="./"):
     def create_job_worker(item_queue:Queue):
         for job in BilibiliJob.objects(finished=False).order_by("-category").limit(500): 
@@ -262,10 +333,15 @@ def crawl_bilibili_job(thread_num:int=1, save_folder="./"):
             userid = str(item["param"][0])
             bvid = str(item["param"][1])
             succ = crawl_download_media(thread_id, userid, bvid, save_folder, audio_only=False)
-        elif category == "dz_downvideo": # 下载视频
+        elif category == "ez_downvideo": # 下载视频
             userid = str(item["param"][0])
             bvid = str(item["param"][1])
             succ = crawl_download_media(thread_id, userid, bvid, save_folder, audio_only=False)
+        elif category == "fz_getsubtitle":  # 获得字幕
+            ### still have some error , few subtitle in bilibili ###
+            userid = str(item["param"][0])
+            bvid = str(item["param"][1])
+            # succ = crawl_get_subtitle(thread_id, userid, bvid, save_folder)
 
         if succ:
             finishJob(job)
