@@ -539,8 +539,8 @@ def crawl_kuwo_job(thread_num:int=1):
         COOKIES.append(BASIC_COOKIES.copy())
 
     # start a separate thread to downlaod song files
-    # thread = Thread(target=download_worker, args=[thread_num])
-    # thread.start()
+    thread = Thread(target=download_worker, args=[thread_num])
+    thread.start()
 
     worker = MultiThreadQueueWorker(threadNum=thread_num, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()

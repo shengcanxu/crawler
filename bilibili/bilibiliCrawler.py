@@ -184,7 +184,7 @@ def crawl_videolist(thread_id:int, url:str, userid:str, oid:str):
 
 def crawl_bilibili_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
-        for job in BilibiliJob.objects(finished=False).order_by("-category").limit(500): 
+        for job in BilibiliJob.objects(category="bz_relation", finished=False).order_by("-category").limit(500):
         # for job in BilibiliJob.objects(category="cz_videolist", finished=False).limit(500):
             try_date = job.tryDate
             if try_date is not None and (datetime.now() - try_date).seconds < 3600 * 5: 
