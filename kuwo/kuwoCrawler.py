@@ -2,10 +2,8 @@ import os
 import random
 import re
 import sys
-
 from enum import Enum
 from threading import Thread
-
 import pinyin
 import hashlib
 import json
@@ -32,10 +30,11 @@ BASIC_HEADERS = {
     "Referer": "https://www.kuwo.cn/",
     "Secret": None
 }
+HM_KEY = "Hm_Iuvt_cdb524f42f23cer9b268564v7y735ewrq2324"  # 这个有可能改变 
 BASIC_COOKIES = {
-    "Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324": None,  # 随着请求经常变化, 一般在请求之前会有set-cookies
-    "Hm_lpvt_cdb524f42f0ce19b169a8071123a4797": "1699117858",
-    "Hm_lvt_cdb524f42f0ce19b169a8071123a4797": "1699109316"
+    HM_KEY: None,  # 随着请求经常变化, 一般在请求之前会有set-cookies
+    # "Hm_lpvt_cdb524f42f0ce19b169a8071123a4797": "1699117858",
+    # "Hm_lvt_cdb524f42f0ce19b169a8071123a4797": "1699109316"
 }
 HEADERS = []
 COOKIES = []
@@ -109,8 +108,9 @@ class SongType(Enum):
     Unknown = "unknown"
 
 def _encode_secret(token):
-    secret = js_context.call("encode_secret", token, "Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324")
+    secret = js_context.call("encode_secret", token, HM_KEY)
     return secret
+
 
 def _get_reqid():
     reqid = js_context.call("encode_reqid")
@@ -199,10 +199,10 @@ def _get_hm_cookie(thread_id:int):
         new_cookie = response.headers["Set-Cookie"]
         new_cookie = re.sub(r";.*", "", new_cookie)
         hm_value = new_cookie.split("=")[1]
-        COOKIES[thread_id]["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"] = hm_value
+        COOKIES[thread_id][HM_KEY] = hm_value
         return hm_value
     else:
-        hm_value = COOKIES[thread_id]["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"]
+        hm_value = COOKIES[thread_id][HM_KEY]
         return hm_value
 
 def _set_hm_cookie(thread_id:int, headers):
@@ -210,7 +210,7 @@ def _set_hm_cookie(thread_id:int, headers):
     if new_cookie is not None and len(new_cookie) >= 76:
         new_cookie = re.sub(r";.*", "", new_cookie)
         hm_value = new_cookie.split("=")[1]
-        COOKIES[thread_id]["Hm_Iuvt_cdb524f42f0cer9b268e4v7y735ewrq2324"] = hm_value
+        COOKIES[thread_id][HM_KEY] = hm_value
 
 def _is_chinese(text):
     chinese_regex = re.compile('^[\u4e00-\u9fff]+')
@@ -270,6 +270,7 @@ def crawl_keyword(thread_id:int, url:str, keyword:str, page_num:int):
         FileLogger.error(f"error on crawling {url} !")
         session.markRequestFails()
         return False
+
 
 # 爬取歌单信息
 def crawl_songlist(thread_id:int, songlist_id:str, page_num:int):
@@ -421,76 +422,10 @@ def crawl_playurl(thread_id:int, url:str, song_id:str):
         session.markRequestFails()
         return False
 
-# 下载mp3， 只能下载免费的
-def download_song(thread_id:int, url:str, song_id:str, artist:str, song_name:str):
-    if DOWNLOAD_BASE_PATH is None:
-        FileLogger.error("please set the DOWNLOAD_BASE_PATH !")
-        return False
-    song = KuwoSong.objects(identify=song_id).first()
-    if song is None: return True
-
-    session = HTMLSession()  # direct download, don't use any proxy
-    try:
-        response = session.get(url, headers=HEADERS[thread_id], cookies=COOKIES[thread_id])
-        if response is None: return False
-
-        # find the file path
-        name_pinyin = pinyin.get(artist, format="strip")
-        first_char = name_pinyin[0].upper() if len(name_pinyin) > 0 else "A"
-        filepath = os.path.join(DOWNLOAD_BASE_PATH, first_char)
-        if not os.path.exists(filepath):
-            os.mkdir(filepath)
-
-        artist = re.sub(r"[\\/:\*\?\"\<\>\|：？“《》]", "", artist)
-        song_name = re.sub(r"[\\/:\*\?\"\<\>\|：？“《》]", "", song_name)
-        filepath = os.path.join(filepath, artist)
-        if not os.path.exists(filepath):
-            os.mkdir(filepath)
-        filename = artist + "-" + song_name + ".mp3"
-        filepath = os.path.join(filepath, filename)
-
-        with open(filepath, "wb") as fp:
-            fp.write(response.content)
-            song.filepath = filepath
-            song.save()
-
-        return True
-
-    except Exception as ex:
-        FileLogger.error(ex)
-        FileLogger.error(f"error on crawling download_song: {song_id} !")
-        return False
-
-def download_worker(thread_id:int):
-    while True:
-        time.sleep(5)
-        for job in KuwoJob.objects(category="ez_download", finished=False).limit(50):
-            url = job.name
-            category = job.category
-            param = job.param
-            identify = param[0]
-            artist = param[1]
-            song_name = param[2]
-
-            succ = download_song(thread_id, url, identify, artist, song_name)
-            if succ:
-                finishJob(job)
-                FileLogger.warning(f"[{thread_id}] success on {url} of {category}")
-            else:
-                failJob(job)
-                FileLogger.error(f"[{thread_id}] fail on {url} of {category}")
-            time.sleep(0)
 
 def crawl_kuwo_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
-        # ez_download jobs less than 1000, then just crawl bz_songlist to add more download jobs
-        unfinished_download = KuwoJob.objects(category="ez_download", finished=False).count()
-        joblist = []
-        if unfinished_download <= 1000:
-            joblist = KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "dz_playurl"], finished=False).order_by("-category").limit(500)
-        if len(joblist) < 300:
-            joblist = KuwoJob.objects(category__ne="ez_download", finished=False).order_by("-category").limit(500)
-
+        joblist = KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "dz_playurl"], finished=False).order_by("-category").limit(500)
         for job in joblist:
             url = job.name
             category = job.category
@@ -522,6 +457,7 @@ def crawl_kuwo_job(thread_num:int=1):
         elif category == "dz_playurl":
             identify = item["param"][0]
             succ = crawl_playurl(thread_id, url, identify)
+        # ez_download is handled by download_worker
 
         if succ:
             finishJob(job)
@@ -538,17 +474,13 @@ def crawl_kuwo_job(thread_num:int=1):
 
         COOKIES.append(BASIC_COOKIES.copy())
 
-    # start a separate thread to downlaod song files
-    thread = Thread(target=download_worker, args=[thread_num])
-    thread.start()
-
     worker = MultiThreadQueueWorker(threadNum=thread_num, minQueueSize=400, crawlFunc=crawl_worker, createJobFunc=create_job_worker)
     worker.start()
 
-# 爬取酷我的歌曲信息和mp3
+# 爬取酷我的歌曲信息
 if __name__ == "__main__":
     # connect(db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
-    connect(host="192.168.0.116", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
+    connect(host="192.168.0.101", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
 
     # DOWNLOAD_BASE_PATH = "D:/test/"
     DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
@@ -556,19 +488,3 @@ if __name__ == "__main__":
     # startProxy(mode=ProxyMode.PROXY_POOL)
     crawl_kuwo_job(thread_num=1)
 
-    # count = 0
-    # ids = KuwoSong.objects(type="toolongname").distinct("identify")
-    # for song_id in ids:
-    #     song = KuwoSong.objects(identify=song_id).first()
-    #     count += 1
-    #     working = True
-    #     song_id = song.identify
-    #     song_type = _check_song_type(song)
-    #     song.type = song_type.value
-    #     song.save()
-    #
-    #     if song.isvip is False and song.type == SongType.ReadyToDownload.value:
-    #         playurl = "https://www.kuwo.cn/api/v1/www/music/playUrl?mid=%s" % song_id
-    #         createJob(KuwoJob, category="dz_playurl", name=playurl, param=[song_id])
-    #
-    #     if count % 500 == 0: print(count)
