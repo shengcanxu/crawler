@@ -59,6 +59,7 @@ class BilibiliUser(Document):
     taglist = DictField(required=False)
     videolist = ListField(required=False)
     crawledpages = ListField(required=False)  # store the crawlled oid
+    subtitles = ListField(required=False)
     meta = {
         "strict": True,
         "collection": "user",

@@ -1,5 +1,6 @@
 
 import argparse
+import math
 import os
 import platform
 from queue import Queue
@@ -131,9 +132,7 @@ def get_video_stream_urls(cid,avid=None,bvid=None,dolby_vision=False,hdr=False,_
     return _video_stream_dash_handler(data)
 
 def _video_stream_dash_handler(data: dict) -> dict:
-    assert 'dash' in data,'''DASH data not found,
-This is usually caused by accessing vip media without vip account logged in.
-(But sometimes happens without reason)'''
+    assert 'dash' in data,'''DASH data not found, This is usually caused by accessing vip media without vip account logged in.(But sometimes happens without reason)'''
 
     audio = []
     if data['dash'].get('audio'):
@@ -175,9 +174,9 @@ This is usually caused by accessing vip media without vip account logged in.
         }
     return stream
 
-def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_only=True):
+def _get_cid(userid:str, bvid:str):
     user = BilibiliUser.objects(userid=userid).first()
-    if user is None: return False
+    if user is None: return None
 
     target_video = None
     videolist = user.videolist
@@ -185,8 +184,14 @@ def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_
         if video["bv_id"] == bvid:
             target_video = video
             break
-    if target_video is None: return False
+    if target_video is None: return None
+
     cid = target_video["pages"][0]["id"]
+    return cid
+
+def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_only=True):
+    cid = _get_cid(userid, bvid)
+    if cid is None: return False
 
     folder = os.path.join(folder, userid)
     if not os.path.exists(folder):
@@ -238,6 +243,86 @@ def crawl_download_media(thread_id:int, userid:str, bvid:str, folder:str, audio_
             os.remove(filename)
         return False
 
+def _subtitle_to_srt(jsondata):
+     srt_file = ''
+     bccdata = jsondata['body']
+     i = 1
+     for data in bccdata:
+         start = data['from']  # 获取开始时间
+         stop = data['to']  # 获取结束时间
+         content = data['content']  # 获取字幕内容
+         srt_file += '{}\n'.format(i)  # 加入序号(没有下标)
+
+         hour = math.floor(start) // 3600
+         minute = (math.floor(start) - hour * 3600) // 60
+         sec = math.floor(start) - hour * 3600 - minute * 60
+         minisec = int(math.modf(start)[0] * 100)  # 处理开始时间
+         srt_file += str(hour).zfill(2) + ':' + str(minute).zfill(2) + ':' + str(sec).zfill(2) + ',' + str(minisec).zfill(2)  # 将数字填充0并按照格式写入
+         srt_file += ' --> '
+         
+         hour = math.floor(stop) // 3600
+         minute = (math.floor(stop) - hour * 3600) // 60
+         sec = math.floor(stop) - hour * 3600 - minute * 60
+         minisec = abs(int(math.modf(stop)[0] * 100 - 1))  # 此处减1是为了防止两个字幕同时出现
+         srt_file += str(hour).zfill(2) + ':' + str(minute).zfill(2) + ':' + str(sec).zfill(2) + ',' + str(minisec).zfill(2)
+         srt_file += '\n' + content + '\n\n'  # 加入字幕文字
+         i += 1
+     return srt_file
+
+def crawl_get_subtitle(thread_id:int, userid:str, bvid:str, folder:str):
+    cid = _get_cid(userid, bvid)
+    if cid is None: return False
+
+    folder = os.path.join(folder, userid)
+    if not os.path.exists(folder):
+        os.mkdir(folder)
+
+    api_wbi = "https://api.bilibili.com/x/player/wbi/v2"
+    params = {
+        'cid': cid, 
+        'bvid': bvid
+    }
+    COOKIE = {
+        'SESSDATA': '46ccb2a2%2C1721528638%2C6964f%2A11CjB21_E-mPA1WejgwOjaS3blZNlx-Q5DNvVN5RAgmm_TvOvY3KylNxnHKGKHozybTtsSVnM0bWJBb3VMVEZKNW9wc1Y3MEh0NTFmbTdjalVfc29zMk5GV1FzQ0loXy1fTkZXSzk4OHZkNUZKRWdIa3NFc3FLMzcwVGdibExKNEktVzE0cm5HeVB3IIEC'
+    }
+    response = getHTMLSession().get(
+        api_wbi + '?' + parse.urlencode(wbi.sign(params=params)),
+        headers=HEADERS[0],
+        cookies=COOKIE
+    )
+
+    if response is None or response.status_code != 200: return False
+    data = json.loads(response.text)
+    subtitles = data['data']['subtitle']['subtitles']
+
+    session = getHTMLSession()
+    try:
+        for subtitle in subtitles:
+            lang = subtitle["lan"]
+            url = subtitle["subtitle_url"]
+            if not url.startswith("http") and not url.startswith("https"):
+                url = "https:" + url
+
+            
+            response = getHTMLSession().get(url, headers=HEADERS[0], cookies=COOKIE)
+            if response is None or response.status_code != 200: return False
+            jsondata = json.loads(response.text)
+            srt = _subtitle_to_srt(jsondata)
+
+            filename = os.path.join(folder, f"{userid}_{bvid}_{lang}.srt")
+            with open(filename, "w") as fp:
+                fp.write(srt)
+
+        session.markRequestSuccess()
+        return True
+
+    except Exception as ex:
+        FileLogger.error(ex)
+        FileLogger.error(f"[{thread_id}]error on userid: {userid} bvid: {bvid} !")
+        session.markRequestFails()
+        return False    
+
+
 def crawl_bilibili_job(thread_num:int=1, save_folder="./"):
     def create_job_worker(item_queue:Queue):
         for job in BilibiliJob.objects(finished=False).order_by("-category").limit(500): 
@@ -262,10 +347,15 @@ def crawl_bilibili_job(thread_num:int=1, save_folder="./"):
             userid = str(item["param"][0])
             bvid = str(item["param"][1])
             succ = crawl_download_media(thread_id, userid, bvid, save_folder, audio_only=False)
-        elif category == "dz_downvideo": # 下载视频
+        elif category == "ez_downvideo": # 下载视频
             userid = str(item["param"][0])
             bvid = str(item["param"][1])
             succ = crawl_download_media(thread_id, userid, bvid, save_folder, audio_only=False)
+        elif category == "fz_getsubtitle":  # 获得字幕
+            ### still have some error , few subtitle in bilibili ###
+            userid = str(item["param"][0])
+            bvid = str(item["param"][1])
+            succ = crawl_get_subtitle(thread_id, userid, bvid, save_folder)
 
         if succ:
             finishJob(job)
@@ -296,7 +386,7 @@ if __name__ == "__main__":
     connect(host="192.168.0.101", port=27017, db="bilibili", alias="bilibili", username="canoxu", password="4401821211", authentication_source='admin')
 
     # startProxy(mode=ProxyMode.PROXY_POOL)
-    crawl_bilibili_job(thread_num=1, save_folder=args.save_folder)
+    # crawl_bilibili_job(thread_num=1, save_folder=args.save_folder)
 
     # cid = "1283343200"
     # bvid = "BV1Pw411e7Zo"
@@ -306,3 +396,7 @@ if __name__ == "__main__":
     # url = "https://xy112x86x163x28xy.mcdn.bilivideo.cn:8082/v1/resource/1404148128-1-30280.m4s?agrr=1&build=0&buvid=&bvc=vod&bw=21220&deadline=1705315459&e=ig8euxZM2rNcNbdlhoNvNC8BqJIzNbfqXBvEqxTEto8BTrNvN0GvT90W5JZMkX_YN0MvXg8gNEV4NC8xNEV4N03eN0B5tZlqNxTEto8BTrNvNeZVuJ10Kj_g2UB02J0mN0B5tZlqNCNEto8BTrNvNC7MTX502C8f2jmMQJ6mqF2fka1mqx6gqj0eN0B599M%3D&f=u_0_0&gen=playurlv2&logo=A0000001&mcdnid=1003420&mid=0&nbs=1&nettype=0&oi=2028725789&orderid=0%2C3&os=mcdn&platform=pc&sign=6058a4&traceid=trirMvsGQOStNx_0_e_N&uipk=5&uparams=e%2Cuipk%2Cnbs%2Cdeadline%2Cgen%2Cos%2Coi%2Ctrid%2Cmid%2Cplatform&upsig=d740d118f3d749e21927fd0ee54aac2a"
     # succ = download_media(url, "test.m4a", "D:/download")
     # print(succ)
+
+    userid = "1000185818"
+    bvid = "BV1Tu4y1j7xt"
+    succ = crawl_get_subtitle(0, userid, bvid, "D:/download")

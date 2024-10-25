@@ -1,5 +1,9 @@
 import re
+import sys
 from enum import Enum
+from threading import Thread
+import pinyin
+import hashlib
 import json
 import time
 import urllib
@@ -21,7 +25,7 @@ BASIC_HEADERS = {
     "Referer": "https://www.kuwo.cn/",
     "Secret": None
 }
-HM_KEY = "Hm_Iuvt_cdb524f42f23cer9b268564v7y735ewrq2324"  # 这个有可能改变
+HM_KEY = "Hm_Iuvt_cdb524f42f23cer9b268564v7y735ewrq2324"  # 这个有可能改变 
 BASIC_COOKIES = {
     HM_KEY: None,  # 随着请求经常变化, 一般在请求之前会有set-cookies
     # "Hm_lpvt_cdb524f42f0ce19b169a8071123a4797": "1699117858",
@@ -416,7 +420,7 @@ def crawl_playurl(thread_id:int, url:str, song_id:str):
 
 def crawl_kuwo_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
-        joblist = KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "ch_playurl", "cz_song"], finished=False).order_by("category").limit(500)
+        joblist = KuwoJob.objects(category__in=["az_searchkeyword", "bz_songlist", "dz_playurl"], finished=False).order_by("-category").limit(500)
         for job in joblist:
             url = job.name
             category = job.category
@@ -474,6 +478,9 @@ if __name__ == "__main__":
     # connect(db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
     connect(host="192.168.0.101", port=27017, db="kuwo", alias="kuwo", username="canoxu", password="4401821211", authentication_source='admin')
 
-    startProxy(mode=ProxyMode.PROXY_POOL)
-    crawl_kuwo_job(thread_num=20)
+    # DOWNLOAD_BASE_PATH = "D:/test/"
+    DOWNLOAD_BASE_PATH = "/home/cano/songfiles/"
+
+    # startProxy(mode=ProxyMode.PROXY_POOL)
+    crawl_kuwo_job(thread_num=1)
 

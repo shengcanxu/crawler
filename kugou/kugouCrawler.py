@@ -448,7 +448,7 @@ function Guid() {
     guid = ctx.call("Guid")
     return guid
 
-# 爬取酷狗的歌曲信息和mp3
+# 爬取酷狗的歌曲信息和mp3, 遇到了验证码的困难，改为爬取kuwo的歌曲
 if __name__ == "__main__":
     connect(host="192.168.0.116", port=27017, db="kugou", alias="kugou", username="canoxu", password="4401821211", authentication_source='admin')
 
