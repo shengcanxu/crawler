@@ -5,23 +5,23 @@ import platform
 from queue import Queue
 import json
 import time
-from urllib import parse, request
+from urllib import parse
 from bilibili.biliapis import wbi
 from bilibili.bilibiliCrawler import BilibiliJob, BilibiliUser
-from bilibili.downloader import download_media, download_media_continue
+from bilibili.downloader import download_media_continue
 from utils.Job import failJob, finishJob
 from utils.httpProxy import getHTMLSession
 
 from utils.logger import FileLogger
 from utils.multiThreadQueue import MultiThreadQueueWorker
-from mongoengine import connect, Document, StringField, DictField, BooleanField, DateTimeField, IntField, ListField, LongField
+from mongoengine import connect
 
 
 BASIC_HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',  # noqa
     'Accept-Charset': 'UTF-8,*;q=0.5',
     'Accept-Encoding': 'gzip,deflate,sdch',
-    'Accept-Language': 'en-US,en;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-TW;q=0.6',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.74 Safari/537.36 Edg/79.0.309.43',  # noqa
     'Referer':'https://www.bilibili.com/'
 }
@@ -94,7 +94,7 @@ def get_video_stream_urls(cid,avid=None,bvid=None,dolby_vision=False,hdr=False,_
     # 尝试请求原来的接口2
     if not succ_flag:
         response = getHTMLSession().get(
-            api_legacy_backup+'?'+parse.urlencode(params),
+            api_legacy_backup + '?' + parse.urlencode(params),
             headers=HEADERS[0],
             cookies=COOKIES[0]
         )
@@ -108,7 +108,7 @@ def get_video_stream_urls(cid,avid=None,bvid=None,dolby_vision=False,hdr=False,_
     # 尝试请求原来的接口3
     if not succ_flag:
         response = getHTMLSession().get(
-            api_legacy_backup_2+'?'+parse.urlencode(params),
+            api_legacy_backup_2 + '?' + parse.urlencode(params),
             headers=HEADERS[0],
             cookies=COOKIES[0]
         )

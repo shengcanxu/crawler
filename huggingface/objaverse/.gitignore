@@ -1,0 +1,4 @@
+object-paths.json
+download_objaverse_glbs.sh
+download_objaverse_metadata.sh
+!.gitignore

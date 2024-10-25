@@ -1,3 +1,4 @@
+from datetime import datetime
 import json
 import time
 from queue import Queue
@@ -19,8 +20,10 @@ from kuwo.js_call import js_context, run_inline_javascript
 BASIC_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    'Accept-Charset': 'UTF-8,*;q=0.5',
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7,zh-TW;q=0.6",
+    'Referer':'https://www.bilibili.com/'
 }
 BASIC_COOKIES = {
 }
@@ -182,8 +185,12 @@ def crawl_videolist(thread_id:int, url:str, userid:str, oid:str):
 
 def crawl_bilibili_job(thread_num:int=1):
     def create_job_worker(item_queue:Queue):
-        for job in BilibiliJob.objects(finished=False).order_by("-category").limit(500): 
-        # for job in BilibiliJob.objects(category="cz_videolist", finished=False).limit(500):
+        # for job in BilibiliJob.objects(finished=False).order_by("-category").limit(500): 
+        for job in BilibiliJob.objects(category__in=["az_relatedvideo", "cz_videolist"], finished=False).order_by("-category").limit(500):
+            try_date = job.tryDate
+            if try_date is not None and (datetime.now() - try_date).seconds < 3600 * 5: 
+                continue   # 出错后5小时再重试
+
             url = job.name
             category = job.category
             param = job.param
